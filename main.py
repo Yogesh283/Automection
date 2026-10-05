@@ -24,7 +24,64 @@ except Exception:
     pass
 
 _file = Path("frontend-settings.json")
-FRONTEND_DATA = json.loads(_file.read_text(encoding="utf-8")) if _file.exists() else {}
+HOSTED_SETTINGS_URL = os.getenv(
+    "HOSTED_SETTINGS_URL",
+    "https://updowanfx.com/frontend-settings.json",
+)
+_last_hosted_load = 0
+FRONTEND_DATA = {}
+
+
+def load_local_settings():
+    if not _file.exists():
+        return {}
+
+    try:
+        saved = json.loads(_file.read_text(encoding="utf-8"))
+        return saved if isinstance(saved, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_hosted_settings():
+    global _last_hosted_load
+
+    try:
+        with urllib.request.urlopen(HOSTED_SETTINGS_URL, timeout=8) as response:
+            hosted = json.loads(response.read().decode("utf-8"))
+        if isinstance(hosted, dict) and isinstance(hosted.get("data"), dict):
+            hosted = hosted["data"]
+        if not isinstance(hosted, dict) or not hosted:
+            return {}
+
+        _file.write_text(
+            json.dumps(hosted, indent=2),
+            encoding="utf-8",
+        )
+        _last_hosted_load = time.time()
+        print("Hosting settings load हो गई:", hosted)
+        return hosted
+    except Exception as error:
+        print("Hosting settings load नहीं हुई, local file use होगी:", error)
+        return {}
+
+
+def refresh_frontend_data(force=False):
+    global FRONTEND_DATA
+
+    if not force and FRONTEND_DATA and time.time() - _last_hosted_load < 15:
+        return FRONTEND_DATA
+
+    hosted = load_hosted_settings()
+    if hosted:
+        FRONTEND_DATA = hosted
+        return FRONTEND_DATA
+
+    FRONTEND_DATA = load_local_settings()
+    return FRONTEND_DATA
+
+
+FRONTEND_DATA = refresh_frontend_data(force=True)
 print(FRONTEND_DATA)
 
 MOBILE_NUMBER = os.getenv("DAMAN_PHONE", "")
@@ -141,8 +198,9 @@ def to_money(value, default=0):
 
 
 def get_risk_limits():
-    stop_loss = to_money(FRONTEND_DATA.get("stopLoss"))
-    target_profit = to_money(FRONTEND_DATA.get("targetProfit"))
+    settings = refresh_frontend_data()
+    stop_loss = to_money(settings.get("stopLoss"))
+    target_profit = to_money(settings.get("targetProfit"))
 
     if _file.exists():
         saved = json.loads(_file.read_text(encoding="utf-8"))
@@ -218,7 +276,8 @@ def session_should_stop(cursor):
 
 
 def get_user_level_amounts():
-    starting = to_money(FRONTEND_DATA.get("startingAmount"), BET_AMOUNT)
+    settings = refresh_frontend_data()
+    starting = to_money(settings.get("startingAmount"), BET_AMOUNT)
     levels = []
 
     if _file.exists():

@@ -10,6 +10,17 @@ if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
     exit;
 }
 
+if ($_SERVER["REQUEST_METHOD"] === "GET") {
+    $json_file = __DIR__ . "/frontend-settings.json";
+    if (is_file($json_file)) {
+        echo file_get_contents($json_file);
+        exit;
+    }
+
+    echo json_encode([]);
+    exit;
+}
+
 if ($_SERVER["REQUEST_METHOD"] !== "POST") {
     echo json_encode([
         "success" => false,
