@@ -88,6 +88,10 @@
       line-height: 1.7;
     }
 
+    .subtitle a {
+      color: var(--accent-2);
+    }
+
     form {
       display: grid;
       gap: 18px;
@@ -409,6 +413,23 @@
     var visibleLevels = 1;
     var savedLevelAmounts = {};
 
+    function isLocalBackendPage() {
+        var host = window.location.hostname;
+        return (host === "127.0.0.1" || host === "localhost") &&
+            String(window.location.port || "") === "8000";
+    }
+
+    function settingsPostUrl() {
+        return isLocalBackendPage() ? "/settings" : "settings.php";
+    }
+
+    if (!isLocalBackendPage()) {
+        var submitButton = document.querySelector("#settingsForm button[type='submit']");
+        if (submitButton) {
+            submitButton.textContent = "Save Settings";
+        }
+    }
+
     function rememberLevelAmount(levelNumber, value) {
         savedLevelAmounts[String(levelNumber)] = value;
     }
@@ -543,7 +564,7 @@
             targetProfit: targetProfit
         };
 
-        fetch("/settings", {
+        fetch(settingsPostUrl(), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -551,7 +572,12 @@
             body: JSON.stringify(data)
         })
         .then(function(response) {
-            return response.json();
+            return response.json().then(function(result) {
+                result._ok = response.ok;
+                return result;
+            }).catch(function() {
+                throw new Error("bad-response");
+            });
         })
         .then(function(result) {
             if (result.success) {
@@ -565,7 +591,7 @@
         })
         .catch(function() {
             document.getElementById("message").textContent =
-                "Backend connect नहीं हुआ।";
+                "Backend connect नहीं हुआ। Hosting पर settings.php upload करो।";
         });
     });
 
