@@ -1,0 +1,8 @@
+.venv/
+.venv-1/
+__pycache__/
+*.pyc
+chrome-debug-profile/
+.vscode/
+frontend-settings.json
+.env

@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automation Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #07101f;
+      --card: rgba(12, 24, 46, 0.82);
+      --panel: rgba(255, 255, 255, 0.04);
+      --field: rgba(6, 14, 28, 0.72);
+      --border: rgba(148, 183, 230, 0.18);
+      --text: #eef4ff;
+      --muted: #93a4c4;
+      --accent: #d4af37;
+      --accent-2: #7dd3fc;
+      --accent-dark: #f3d67a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: clamp(16px, 4vw, 36px);
+      color: var(--text);
+      font-family: Outfit, "Noto Sans Devanagari", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(212, 175, 55, 0.16), transparent 28%),
+        radial-gradient(circle at 88% 0%, rgba(56, 189, 248, 0.18), transparent 32%),
+        radial-gradient(circle at 80% 100%, rgba(30, 64, 175, 0.35), transparent 34%),
+        linear-gradient(180deg, #081428 0%, #050b16 100%);
+    }
+
+    .card {
+      width: min(100%, 820px);
+      padding: clamp(22px, 4vw, 40px);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 28%),
+        var(--card);
+      box-shadow:
+        0 30px 80px rgba(2, 8, 20, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(18px);
+    }
+
+    .header {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 26px;
+    }
+
+    .eyebrow {
+      width: fit-content;
+      margin: 0;
+      padding: 6px 10px;
+      border: 1px solid rgba(212, 175, 55, 0.28);
+      border-radius: 999px;
+      color: var(--accent);
+      background: rgba(212, 175, 55, 0.08);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 6vw, 48px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      max-width: 38rem;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    form {
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel {
+      display: grid;
+      gap: 16px;
+      padding: clamp(16px, 3vw, 20px);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--panel);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    label,
+    legend {
+      color: #c5d4ee;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    input {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      outline: none;
+      padding: 13px 14px;
+      color: var(--text);
+      background: var(--field);
+      font: inherit;
+      transition: border-color 160ms, box-shadow 160ms, background 160ms;
+    }
+
+    input::placeholder {
+      color: #6f82a6;
+    }
+
+    input:focus {
+      border-color: rgba(212, 175, 55, 0.7);
+      background: rgba(8, 18, 36, 0.9);
+      box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.12);
+    }
+
+    fieldset {
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+
+    legend {
+      margin-bottom: 10px;
+    }
+
+    .choice-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .choice-group input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+
+    .choice-group label {
+      cursor: pointer;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: var(--field);
+      text-align: center;
+      letter-spacing: 0.08em;
+      transition: 160ms;
+    }
+
+    .choice-group input:checked + label {
+      border-color: rgba(125, 211, 252, 0.55);
+      color: #eaf8ff;
+      background: linear-gradient(180deg, rgba(125, 211, 252, 0.18), rgba(14, 28, 52, 0.7));
+      box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.25);
+    }
+
+    button {
+      cursor: pointer;
+      border: 0;
+      border-radius: 14px;
+      padding: 15px 20px;
+      color: #1a1404;
+      background: linear-gradient(135deg, #f3d67a, var(--accent));
+      box-shadow: 0 14px 30px rgba(212, 175, 55, 0.22);
+      font: 800 16px inherit;
+      transition: transform 160ms, box-shadow 160ms;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 34px rgba(212, 175, 55, 0.28);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .form-actions {
+      display: grid;
+    }
+
+    .message {
+      min-height: 22px;
+      margin: 0;
+      color: var(--accent-2);
+      text-align: center;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .level-section {
+      display: grid;
+      gap: 12px;
+    }
+
+    .level-section h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }
+
+    .level-section p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .level-options {
+      display: grid;
+      gap: 12px;
+    }
+
+    .level-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 52px;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .plus-button {
+      width: 52px;
+      height: 48px;
+      padding: 0;
+      border-radius: 14px;
+      color: #eaf8ff;
+      background: linear-gradient(180deg, #1d4ed8, #1e3a8a);
+      box-shadow: 0 10px 20px rgba(29, 78, 216, 0.28);
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .plus-button:disabled {
+      cursor: default;
+      opacity: 0.35;
+      transform: none;
+      box-shadow: none;
+    }
+
+    @media (max-width: 720px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 520px) {
+      body {
+        padding: 12px;
+        place-items: start center;
+      }
+
+      .card {
+        border-radius: 22px;
+      }
+
+      .choice-group,
+      .level-row {
+        grid-template-columns: 1fr;
+      }
+
+      .plus-button {
+        width: 100%;
+        height: 46px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <header class="header">
+      <p class="eyebrow">Strategy Control</p>
+      <h1>Automation Settings</h1>
+      <p class="subtitle">
+        Set your starting amount, level options, selection, and risk limits.
+      </p>
+    </header>
+
+    <form id="settingsForm" method="post">
+      <section class="panel">
+        <div class="grid">
+          <div class="field">
+            <label for="mobileNumber">Mobile Number</label>
+            <input
+              id="mobileNumber"
+              name="mobileNumber"
+              type="number"
+              required
+            >
+          </div>
+
+          <div class="field">
+            <label for="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              required
+            >
+          </div>
+
+          <div class="field">
+            <label for="startingAmount">Starting Amount (₹)</label>
+            <input
+              id="startingAmount"
+              name="startingAmount"
+              type="number"
+              min="1"
+              step="1"
+              value="10"
+              required
+            >
+          </div>
+        </div>
+        <input id="maxLevels" name="maxLevels" type="hidden" value="1">
+      </section>
+
+      <section class="panel level-section">
+        <h2>Level Amount</h2>
+        <p>
+          पहले सिर्फ Level 1 खुला रहेगा। Plus दबाने पर अगला level खुलेगा, ज्यादा से ज्यादा 10 तक।
+        </p>
+        <div id="levelOptions" class="level-options"></div>
+      </section>
+
+      <section class="panel">
+        <fieldset>
+          <legend>Selection</legend>
+          <div class="choice-group">
+            <input id="big" name="choice" type="radio" value="big" checked>
+            <label for="big">BIG</label>
+
+            <input id="small" name="choice" type="radio" value="small">
+            <label for="small">SMALL</label>
+          </div>
+        </fieldset>
+      </section>
+
+      <section class="panel">
+        <div class="grid">
+          <div class="field">
+            <label for="stopLoss">Stop Loss (₹)</label>
+            <input
+              id="stopLoss"
+              name="stopLoss"
+              type="number"
+              min="1"
+              step="1"
+              value="100"
+              required
+            >
+          </div>
+
+          <div class="field">
+            <label for="targetProfit">Target Profit (₹)</label>
+            <input
+              id="targetProfit"
+              name="targetProfit"
+              type="number"
+              min="1"
+              step="1"
+              value="50"
+              required
+            >
+          </div>
+        </div>
+      </section>
+
+      <div class="form-actions">
+        <button type="submit">Start Offline Session</button>
+      
+      </div>
+      <p id="message" class="message" role="status"></p>
+    </form>
+  </main>
+  <script>
+    var visibleLevels = 1;
+    var savedLevelAmounts = {};
+
+    function rememberLevelAmount(levelNumber, value) {
+        savedLevelAmounts[String(levelNumber)] = value;
+    }
+
+    function renderLevelOptions() {
+        var container = document.getElementById("levelOptions");
+        var startingAmount = document.getElementById("startingAmount").value;
+        container.innerHTML = "";
+
+        for (var i = 1; i <= visibleLevels; i++) {
+            var row = document.createElement("div");
+            row.className = "level-row";
+
+            var field = document.createElement("div");
+            field.className = "field";
+
+            var label = document.createElement("label");
+            label.setAttribute("for", "levelAmount" + i);
+            label.textContent = "Level " + i + " Amount (₹)";
+
+            var input = document.createElement("input");
+            input.id = "levelAmount" + i;
+            input.name = "levelAmount" + i;
+            input.type = "number";
+            input.min = "1";
+            input.step = "1";
+            input.required = true;
+
+            if (savedLevelAmounts[String(i)]) {
+                input.value = savedLevelAmounts[String(i)];
+            } else if (i === 1 && startingAmount) {
+                input.value = startingAmount;
+            }
+
+            input.addEventListener("input", function(event) {
+                var levelNumber = event.target.id.replace("levelAmount", "");
+                rememberLevelAmount(levelNumber, event.target.value);
+            });
+
+            field.appendChild(label);
+            field.appendChild(input);
+            row.appendChild(field);
+
+            if (i === visibleLevels) {
+                var plusButton = document.createElement("button");
+                plusButton.type = "button";
+                plusButton.className = "plus-button";
+                plusButton.textContent = "+";
+                plusButton.disabled = visibleLevels >= 10;
+                plusButton.addEventListener("click", addNextLevel);
+                row.appendChild(plusButton);
+            }
+
+            container.appendChild(row);
+        }
+
+        document.getElementById("maxLevels").value = String(visibleLevels);
+    }
+
+    function addNextLevel() {
+        if (visibleLevels >= 10) {
+            return;
+        }
+
+        var currentInput = document.getElementById("levelAmount" + visibleLevels);
+        if (currentInput) {
+            rememberLevelAmount(visibleLevels, currentInput.value);
+        }
+
+        visibleLevels = visibleLevels + 1;
+        renderLevelOptions();
+    }
+
+    function collectLevelAmounts() {
+        var levelAmounts = [];
+
+        for (var i = 1; i <= visibleLevels; i++) {
+            var input = document.getElementById("levelAmount" + i);
+            var value = input ? input.value : "";
+            rememberLevelAmount(i, value);
+            levelAmounts.push(value);
+        }
+
+        return levelAmounts;
+    }
+
+    document.getElementById("startingAmount").addEventListener("input", function() {
+        var firstLevel = document.getElementById("levelAmount1");
+
+        if (firstLevel && !savedLevelAmounts["1"]) {
+            firstLevel.value = document.getElementById("startingAmount").value;
+        }
+    });
+
+    document.getElementById("settingsForm").addEventListener("submit", function(e) {
+        e.preventDefault();
+
+        const mobileNumber =
+            document.getElementById("mobileNumber").value;
+
+        const password =
+            document.getElementById("password").value;
+
+        const startingAmount =
+            document.getElementById("startingAmount").value;
+
+        const maxLevels =
+            String(visibleLevels);
+
+        const choiceElement =
+            document.querySelector('input[name="choice"]:checked');
+
+        const choice =
+            choiceElement ? choiceElement.value : "";
+
+        const stopLoss =
+            document.getElementById("stopLoss").value;
+
+        const targetProfit =
+            document.getElementById("targetProfit").value;
+
+        const levelAmounts = collectLevelAmounts();
+
+        const data = {
+            mobileNumber: mobileNumber,
+            password: password,
+            startingAmount: startingAmount,
+            maxLevels: maxLevels,
+            levelAmounts: levelAmounts,
+            choice: choice,
+            stopLoss: stopLoss,
+            targetProfit: targetProfit
+        };
+
+        fetch("http://127.0.0.1:8000/settings", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(data)
+        })
+        .then(function(response) {
+            return response.json();
+        })
+        .then(function(result) {
+            if (result.success) {
+                document.getElementById("message").textContent =
+                    result.message || "System start हो गया। Login हो रहा है।";
+            } else {
+                document.getElementById("message").textContent =
+                    result.error || "Database में save नहीं हुआ।";
+            }
+            console.log(result);
+        })
+        .catch(function() {
+            document.getElementById("message").textContent =
+                "Backend connect नहीं हुआ।";
+        });
+    });
+
+    renderLevelOptions();
+    </script>
+  
+</body>
+</html>
