@@ -48,9 +48,9 @@ DRY_RUN = False
 SESSION_STARTED_AT = None
 CHROME_DEBUG_PORT = 9222
 CHROME_DEBUG_PROFILE = Path(__file__).parent / "chrome-debug-profile"
-GAME_SITE = "updownfx.com"
-LOGIN_URL = "https://updownfx.com/#/login"
-WINGO_URL = "https://updownfx.com/#/saas/Lottery/WinGo?gameCode=WinGo_30S&lottery=WinGo"
+GAME_SITE = "damanvipgames.com"
+LOGIN_URL = "https://damanvipgames.com/#/login"
+WINGO_URL = "https://damanvipgames.com/#/saas/Lottery/WinGo?gameCode=WinGo_30S&lottery=WinGo"
 
 
 def chrome_debug_running():
