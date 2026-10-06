@@ -6,3 +6,5 @@ chrome-debug-profile/
 .vscode/
 frontend-settings.json
 .env
+last-hosting-start.json
+config.php

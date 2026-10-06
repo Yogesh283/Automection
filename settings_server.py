@@ -19,21 +19,22 @@ app.add_middleware(
 HTML_FILE = Path(__file__).parent / "bet-settings.html"
 SETTINGS_FILE = Path(__file__).parent / "frontend-settings.json"
 MAIN_FILE = Path(__file__).parent / "main.py"
-_main_process = None
+_main_processes = {}
 
 
-def start_main_app(mobile_number, password_text):
-    global _main_process
-
-    if _main_process is not None and _main_process.poll() is None:
+def start_main_app(mobile_number, password_text, user_id):
+    process = _main_processes.get(mobile_number)
+    if process is not None and process.poll() is None:
         return False
 
     env = os.environ.copy()
     env["DAMAN_PHONE"] = str(mobile_number)
     env["DAMAN_PASSWORD"] = str(password_text)
+    env["DAMAN_USER_ID"] = str(user_id)
+    env["PYTHONUNBUFFERED"] = "1"
 
-    _main_process = subprocess.Popen(
-        [sys.executable, str(MAIN_FILE)],
+    _main_processes[mobile_number] = subprocess.Popen(
+        [sys.executable, "-u", str(MAIN_FILE)],
         cwd=str(Path(__file__).parent),
         env=env,
     )
@@ -42,9 +43,10 @@ def start_main_app(mobile_number, password_text):
 
 def connect_database():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        database="automection",
+        host=os.getenv("DB_HOST", "localhost"),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASSWORD", ""),
+        database=os.getenv("DB_NAME", "automection"),
     )
 
 
@@ -55,7 +57,7 @@ def to_int(value, default=0):
         return default
 
 
-def save_settings_to_database(data):
+def save_settings_to_database(data, mobile_number):
     db = connect_database()
     cursor = db.cursor()
 
@@ -74,6 +76,10 @@ def save_settings_to_database(data):
         )
         """
     )
+    cursor.execute("SHOW COLUMNS FROM `settings`")
+    columns = [row[0] for row in cursor.fetchall()]
+    if "mobile_number" not in columns:
+        cursor.execute("ALTER TABLE `settings` ADD COLUMN `mobile_number` VARCHAR(20) NULL")
 
     starting_amount = to_int(data.get("startingAmount"))
     max_levels = to_int(data.get("maxLevels"), 1)
@@ -86,13 +92,16 @@ def save_settings_to_database(data):
         """
         SELECT `id`
         FROM `settings`
+        WHERE `mobile_number` = %s
         ORDER BY `id` DESC
         LIMIT 1
-        """
+        """,
+        (mobile_number,),
     )
     row = cursor.fetchone()
 
     if row:
+        user_id = row[0]
         cursor.execute(
             """
             UPDATE `settings`
@@ -111,13 +120,14 @@ def save_settings_to_database(data):
                 choice,
                 stop_loss,
                 target_profit,
-                row[0],
+                user_id,
             ),
         )
     else:
         cursor.execute(
             """
             INSERT INTO `settings` (
+                `mobile_number`,
                 `starting_amount`,
                 `max_levels`,
                 `level_amounts`,
@@ -125,9 +135,10 @@ def save_settings_to_database(data):
                 `stop_loss`,
                 `target_profit`
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
+                mobile_number,
                 starting_amount,
                 max_levels,
                 level_amounts,
@@ -136,10 +147,12 @@ def save_settings_to_database(data):
                 target_profit,
             ),
         )
+        user_id = cursor.lastrowid
 
     db.commit()
     cursor.close()
     db.close()
+    return user_id
 
 
 @app.get("/")
@@ -162,7 +175,7 @@ def settings(data: dict):
     save_data.pop("mobileNumber", None)
 
     try:
-        save_settings_to_database(save_data)
+        user_id = save_settings_to_database(save_data, mobile_number)
     except Exception as error:
         print("Database save failed:", error)
         return {
@@ -181,15 +194,16 @@ def settings(data: dict):
             "error": "Mobile number और password दोनों चाहिए।",
         }
 
-    started = start_main_app(mobile_number, password_text)
+    started = start_main_app(mobile_number, password_text, user_id)
     if started:
-        message = "System start हो गया। Login अपने आप भरेगा।"
+        message = f"User ID {user_id} start हो गया। Login अपने आप भरेगा।"
     else:
-        message = "System पहले से चल रहा है।"
+        message = f"User ID {user_id} पहले से चल रहा है।"
 
     return {
         "success": True,
         "started": started,
+        "userId": user_id,
         "message": message,
         "data": save_data
     }

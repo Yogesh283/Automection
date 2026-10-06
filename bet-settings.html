@@ -409,6 +409,25 @@
     var visibleLevels = 1;
     var savedLevelAmounts = {};
 
+    function isLocalBackendPage() {
+        var host = window.location.hostname;
+        return (host === "127.0.0.1" || host === "localhost") &&
+            String(window.location.port || "") === "8000";
+    }
+
+    function settingsPostUrl() {
+        // Local FastAPI और live domain दोनों पर /settings ही जाएगा।
+        // Live पर .htaccess settings.php को /settings से जोड़ता है।
+        return "/settings";
+    }
+
+    if (!isLocalBackendPage()) {
+        var submitButton = document.querySelector("#settingsForm button[type='submit']");
+        if (submitButton) {
+            submitButton.textContent = "Start Bot";
+        }
+    }
+
     function rememberLevelAmount(levelNumber, value) {
         savedLevelAmounts[String(levelNumber)] = value;
     }

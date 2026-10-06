@@ -1,3 +1,4 @@
+import ctypes
 import json
 import os
 import subprocess
@@ -13,7 +14,9 @@ from selenium.common.exceptions import (
     ElementNotInteractableException,
     InvalidSessionIdException,
     NoSuchElementException,
+    StaleElementReferenceException,
 )
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
@@ -29,6 +32,7 @@ print(FRONTEND_DATA)
 
 MOBILE_NUMBER = os.getenv("DAMAN_PHONE", "")
 PASSWORD = os.getenv("DAMAN_PASSWORD", "")
+USER_ID = os.getenv("DAMAN_USER_ID", "").strip()
 
 
 SERIAL_CLASS = "TimeLeft__C-id"
@@ -39,13 +43,16 @@ RESULT_CSS = ".winner_result"
 RESULT_ROW_CSS = ".record-body .van-row"
 
 POLL_INTERVAL_SECONDS = 1
-BET_PREPARE_DELAY_SECONDS = 10
+BET_PREPARE_DELAY_SECONDS = 5
+MIN_SECONDS_TO_BET = 3
 BET_AMOUNT = 5
 BET_TYPE = "big"
 WIN_PAYOUT_RATE = 0.98
 
 DRY_RUN = False
 SESSION_STARTED_AT = None
+SESSION_MAIN_AMOUNT = None
+SESSION_TARGET_PROFIT = None
 CHROME_DEBUG_PORT = 9222
 CHROME_DEBUG_PROFILE = Path(__file__).parent / "chrome-debug-profile"
 GAME_SITE = "damanvipgames.com"
@@ -64,7 +71,7 @@ def chrome_debug_running():
         return False
 
 
-def start_debug_chrome(start_url="http://127.0.0.1:8000/settings"):
+def start_debug_chrome(start_url="https://updowanfx.com/settings"):
     if chrome_debug_running():
         return
 
@@ -100,8 +107,104 @@ def start_debug_chrome(start_url="http://127.0.0.1:8000/settings"):
     raise Exception("Chrome debug port start नहीं हुआ।")
 
 
+def keep_system_awake():
+    if os.name != "nt":
+        return
+
+    # Screen band ho sakti hai. System sleep nahi hoga, isliye automation chalti rahegi.
+    es_continuous = 0x80000000
+    es_system_required = 0x00000001
+    es_awaymode_required = 0x00000040
+    ctypes.windll.kernel32.SetThreadExecutionState(
+        es_continuous | es_system_required | es_awaymode_required
+    )
+
+
+def allow_system_sleep():
+    if os.name != "nt":
+        return
+
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+
+
+ALWAYS_VISIBLE_JS = """
+Object.defineProperty(document, 'hidden', {get: function(){ return false; }, configurable: true});
+Object.defineProperty(document, 'visibilityState', {get: function(){ return 'visible'; }, configurable: true});
+Object.defineProperty(document, 'webkitHidden', {get: function(){ return false; }, configurable: true});
+document.hasFocus = function(){ return true; };
+window.onblur = null;
+window.onfocus = null;
+"""
+
+
+def harden_browser_for_background(browser):
+    try:
+        browser.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": ALWAYS_VISIBLE_JS},
+        )
+    except Exception:
+        pass
+
+    try:
+        browser.execute_cdp_cmd(
+            "Emulation.setFocusEmulationEnabled",
+            {"enabled": True},
+        )
+    except Exception:
+        pass
+
+    keep_browser_active(browser)
+
+
+def keep_browser_active(browser):
+    try:
+        browser.execute_script(ALWAYS_VISIBLE_JS + "\ntry{window.focus();}catch(e){}")
+    except Exception:
+        pass
+
+    try:
+        browser.execute_cdp_cmd(
+            "Emulation.setFocusEmulationEnabled",
+            {"enabled": True},
+        )
+    except Exception:
+        pass
+
+
 def connect_chrome():
-    return webdriver.Chrome()
+    options = Options()
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache")
+    options.add_argument("--disable-hang-monitor")
+    options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--window-size=1200,900")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+
+    # AWS/Linux server pe display nahi hota. Local Windows pe pehle jaisa Chrome khulega.
+    headless_env = os.getenv("HEADLESS", "").strip().lower()
+    use_headless = headless_env in ("1", "true", "yes")
+    if headless_env in ("0", "false", "no"):
+        use_headless = False
+    elif os.name != "nt" and not os.environ.get("DISPLAY"):
+        use_headless = True
+
+    if use_headless:
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--remote-allow-origins=*")
+        print("Chrome headless mode (AWS/server) चालू है।")
+
+    browser = webdriver.Chrome(options=options)
+    harden_browser_for_background(browser)
+    return browser
 
 
 def open_in_same_tab(browser, url):
@@ -110,9 +213,10 @@ def open_in_same_tab(browser, url):
 
 def connect_database():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        database="automection",
+        host=os.getenv("DB_HOST", "localhost"),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASSWORD", ""),
+        database=os.getenv("DB_NAME", "automection"),
     )
 
 
@@ -130,7 +234,22 @@ def prepare_database(cursor, db):
     else:
         cursor.execute("ALTER TABLE `data` MODIFY `loss_amount` DECIMAL(10,2) NULL")
 
+    if "user_id" not in columns:
+        cursor.execute("ALTER TABLE `data` ADD COLUMN `user_id` INT NULL")
+
     db.commit()
+
+
+def current_user_id():
+    if not USER_ID:
+        return None
+    return int(USER_ID)
+
+
+def user_sql(params):
+    if not USER_ID:
+        return "", tuple(params)
+    return " AND `user_id` = %s", tuple(params) + (int(USER_ID),)
 
 
 def to_money(value, default=0):
@@ -152,14 +271,24 @@ def get_risk_limits():
     try:
         db = connect_database()
         cursor = db.cursor()
-        cursor.execute(
-            """
-            SELECT `stop_loss`, `target_profit`
-            FROM `settings`
-            ORDER BY `id` DESC
-            LIMIT 1
-            """
-        )
+        if USER_ID:
+            cursor.execute(
+                """
+                SELECT `stop_loss`, `target_profit`
+                FROM `settings`
+                WHERE `id` = %s
+                """,
+                (int(USER_ID),),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT `stop_loss`, `target_profit`
+                FROM `settings`
+                ORDER BY `id` DESC
+                LIMIT 1
+                """
+            )
         row = cursor.fetchone()
         cursor.close()
         db.close()
@@ -179,39 +308,48 @@ def get_session_totals(cursor):
     if SESSION_STARTED_AT is None:
         return 0.0, 0.0
 
+    clause, params = user_sql([SESSION_STARTED_AT])
     cursor.execute(
-        """
+        f"""
         SELECT COALESCE(SUM(`win_amount`), 0), COALESCE(SUM(`loss_amount`), 0)
         FROM `data`
         WHERE `user_bet` IS NOT NULL
           AND `time` >= %s
+          {clause}
         """,
-        (SESSION_STARTED_AT,),
+        params,
     )
     win_total, loss_total = cursor.fetchone()
     return to_money(win_total), to_money(loss_total)
 
 
 def session_should_stop(cursor):
-    stop_loss, target_profit = get_risk_limits()
+    global SESSION_MAIN_AMOUNT, SESSION_TARGET_PROFIT
+
+    if SESSION_MAIN_AMOUNT is None or SESSION_TARGET_PROFIT is None:
+        SESSION_MAIN_AMOUNT, SESSION_TARGET_PROFIT = get_risk_limits()
+
+    main_amount = to_money(SESSION_MAIN_AMOUNT)
+    target_add = to_money(SESSION_TARGET_PROFIT)
     win_total, loss_total = get_session_totals(cursor)
+    net = win_total - loss_total
+    current_amount = main_amount + net
+    target_line = main_amount + target_add
     print(
-        "Session profit:",
-        win_total,
-        "/",
-        target_profit,
-        "Session loss:",
-        loss_total,
-        "/",
-        stop_loss,
+        "Main amount:",
+        main_amount,
+        "Current amount:",
+        round(current_amount, 2),
+        "Target off:",
+        target_line,
     )
 
-    if target_profit and win_total >= target_profit:
-        print("Target profit पूरा हो गया। System stop हो रहा है।")
+    if target_add and current_amount >= target_line:
+        print("Target price plus हो गया। System off हो रहा है।")
         return True
 
-    if stop_loss and loss_total >= stop_loss:
-        print("Stop loss पूरा हो गया। System stop हो रहा है।")
+    if main_amount and loss_total - win_total >= main_amount:
+        print("Main amount का loss पूरा हो गया। Stop loss पर system stop हो रहा है।")
         return True
 
     return False
@@ -232,14 +370,24 @@ def get_user_level_amounts():
     try:
         db = connect_database()
         cursor = db.cursor()
-        cursor.execute(
-            """
-            SELECT `starting_amount`, `level_amounts`
-            FROM `settings`
-            ORDER BY `id` DESC
-            LIMIT 1
-            """
-        )
+        if USER_ID:
+            cursor.execute(
+                """
+                SELECT `starting_amount`, `level_amounts`
+                FROM `settings`
+                WHERE `id` = %s
+                """,
+                (int(USER_ID),),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT `starting_amount`, `level_amounts`
+                FROM `settings`
+                ORDER BY `id` DESC
+                LIMIT 1
+                """
+            )
         row = cursor.fetchone()
         cursor.close()
         db.close()
@@ -265,44 +413,60 @@ def get_user_level_amounts():
     return starting, levels
 
 
+def next_amount_after_loss(last_amount, starting, levels):
+    last_amount = to_money(last_amount)
+    if not levels:
+        return starting, 0
+
+    if abs(last_amount - to_money(starting)) < 0.001:
+        return levels[0], 1
+
+    for index, level_amount in enumerate(levels):
+        if abs(last_amount - to_money(level_amount)) < 0.001:
+            if index + 1 < len(levels):
+                return levels[index + 1], index + 2
+            return starting, 0
+
+    return levels[0], 1
+
+
 def get_next_bet_amount(cursor):
     starting, levels = get_user_level_amounts()
+    last_amount = None
+    last_status = None
 
-    consecutive_losses = 0
     if SESSION_STARTED_AT is not None:
+        clause, params = user_sql([SESSION_STARTED_AT])
         cursor.execute(
-            """
-            SELECT `status`
+            f"""
+            SELECT `amount`, `status`
             FROM `data`
             WHERE `user_bet` IS NOT NULL
               AND `status` IN (1, -1)
               AND `time` >= %s
+              {clause}
             ORDER BY `id` DESC
+            LIMIT 1
             """,
-            (SESSION_STARTED_AT,),
+            params,
         )
-        rows = cursor.fetchall()
+        row = cursor.fetchone()
+        if row:
+            last_amount = row[0]
+            last_status = row[1]
 
-        for status_row in rows:
-            if status_row[0] == -1:
-                consecutive_losses = consecutive_losses + 1
-            else:
-                break
-
-    # पहली bet और WIN के बाद starting amount।
-    # LOSS पर level 1, 2, 3...। सारे level पूरे हों तो फिर starting से शुरू।
-    if not levels:
-        amount = starting
-        print("Next amount: Start bet =", amount)
-        return int(amount) if amount == int(amount) else amount
-
-    cycle = consecutive_losses % (len(levels) + 1)
-    if cycle == 0:
+    # WIN और पहली bet पर starting amount।
+    # सिर्फ आखिरी LOSS के अगले level पर जाना है। 300 तभी, जब 100 की bet हारी हो।
+    if last_status != -1:
         amount = starting
         print("Next amount: Start bet =", amount)
     else:
-        amount = levels[cycle - 1]
-        print("Next amount: Level", cycle, "=", amount)
+        amount, level_number = next_amount_after_loss(last_amount, starting, levels)
+        if level_number == 0:
+            print("आखिरी level का loss book हो गया। Starting bet से दोबारा शुरू।")
+            print("Next amount: Start bet =", amount)
+        else:
+            print("Next amount: Level", level_number, "=", amount)
 
     if amount == int(amount):
         amount = int(amount)
@@ -426,6 +590,24 @@ def get_serial_from_history(browser):
     return last_period
 
 
+def get_remaining_seconds(browser):
+    boxes = browser.find_elements(By.CSS_SELECTOR, "[class*='TimeLeft__C-time']")
+    if not boxes:
+        boxes = browser.find_elements(By.CSS_SELECTOR, "[class*='TimeLeft__C-num']")
+
+    for box in boxes:
+        raw = box.text.replace("\n", "").replace(" ", "")
+        if ":" not in raw:
+            continue
+        left, right = raw.split(":", 1)
+        left = "".join(character for character in left if character.isdigit())
+        right = "".join(character for character in right if character.isdigit())
+        if left.isdigit() and right.isdigit() and len(right) <= 2:
+            return int(left) * 60 + int(right)
+
+    return None
+
+
 def get_serial_number(browser):
     selectors = [
         (By.CLASS_NAME, SERIAL_CLASS),
@@ -434,17 +616,23 @@ def get_serial_number(browser):
         (By.CSS_SELECTOR, "[class*='TimeLeft']"),
     ]
 
-    for by, value in selectors:
-        elements = browser.find_elements(by, value)
-        for element in elements:
-            text = element.text.strip()
-            digits = "".join(character for character in text if character.isdigit())
-            if len(digits) >= 10:
-                return digits
+    try:
+        for by, value in selectors:
+            elements = browser.find_elements(by, value)
+            for element in elements:
+                try:
+                    text = element.text.strip()
+                except StaleElementReferenceException:
+                    continue
+                digits = "".join(character for character in text if character.isdigit())
+                if len(digits) >= 10:
+                    return digits
 
-    history_serial = get_serial_from_history(browser)
-    if history_serial:
-        return history_serial
+        history_serial = get_serial_from_history(browser)
+        if history_serial:
+            return history_serial
+    except Exception as error:
+        print("Serial read error, retry होगा:", error)
 
     return None
 
@@ -477,23 +665,26 @@ def get_result_records(browser):
         rows = browser.find_elements(By.CSS_SELECTOR, ".van-row")
 
     for row in rows:
-        columns = row.find_elements(
-            By.XPATH, "./div[contains(@class,'van-col')]"
-        )
-        if len(columns) < 3:
-            columns = row.find_elements(By.XPATH, "./div")
+        try:
+            columns = row.find_elements(
+                By.XPATH, "./div[contains(@class,'van-col')]"
+            )
+            if len(columns) < 3:
+                columns = row.find_elements(By.XPATH, "./div")
 
-        if len(columns) >= 3:
-            period = columns[0].text.strip()
-            result = columns[2].text.strip().lower()
+            if len(columns) >= 3:
+                period = columns[0].text.strip()
+                result = columns[2].text.strip().lower()
 
-            if "small" in result:
-                result = "small"
-            elif "big" in result:
-                result = "big"
+                if "small" in result:
+                    result = "small"
+                elif "big" in result:
+                    result = "big"
 
-            if period.isdigit() and result in ("big", "small"):
-                records.append((period, result))
+                if period.isdigit() and result in ("big", "small"):
+                    records.append((period, result))
+        except StaleElementReferenceException:
+            continue
 
     return records
 
@@ -513,25 +704,46 @@ def get_last_big_small(browser):
 
 
 def save_serial(cursor, db, serial_number):
+    if serial_has_row(cursor, serial_number):
+        return
+
     query = """
-        INSERT INTO `data` (`number`, `status`)
-        VALUES (%s, %s)
+        INSERT INTO `data` (`number`, `status`, `user_id`)
+        VALUES (%s, %s, %s)
     """
-    cursor.execute(query, (serial_number, 0))
+    cursor.execute(query, (serial_number, 0, current_user_id()))
     db.commit()
     print(f"New serial database में save हुआ: {serial_number}")
 
 
-def save_user_bet(cursor, db, serial_number, bet_type, amount):
+def serial_has_row(cursor, serial_number):
+    clause, params = user_sql([serial_number])
     cursor.execute(
-        """
+        f"""
         SELECT `id`
         FROM `data`
         WHERE `number` = %s
+          {clause}
         ORDER BY `id` DESC
         LIMIT 1
         """,
-        (serial_number,),
+        params,
+    )
+    return cursor.fetchone() is not None
+
+
+def save_user_bet(cursor, db, serial_number, bet_type, amount):
+    clause, params = user_sql([serial_number])
+    cursor.execute(
+        f"""
+        SELECT `id`
+        FROM `data`
+        WHERE `number` = %s
+          {clause}
+        ORDER BY `id` DESC
+        LIMIT 1
+        """,
+        params,
     )
     row = cursor.fetchone()
 
@@ -551,11 +763,11 @@ def save_user_bet(cursor, db, serial_number, bet_type, amount):
         cursor.execute(
             """
             INSERT INTO `data` (
-                `number`, `user_bet`, `amount`, `status`, `win_amount`, `loss_amount`
+                `number`, `user_bet`, `amount`, `status`, `win_amount`, `loss_amount`, `user_id`
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (serial_number, bet_type.lower(), amount, 0, 0, 0),
+            (serial_number, bet_type.lower(), amount, 0, 0, 0, current_user_id()),
         )
 
     db.commit()
@@ -615,15 +827,17 @@ def recovery_simulator():
 
 def save_game_result(cursor, db, serial_number, result_type):
     # उसी serial की saved bet और amount से WIN/LOSS amount निकाली जाती है।
+    clause, params = user_sql([serial_number])
     cursor.execute(
-        """
+        f"""
         SELECT `id`, `user_bet`, `amount`
         FROM `data`
         WHERE `number` = %s
+          {clause}
         ORDER BY `id` DESC
         LIMIT 1
         """,
-        (serial_number,),
+        params,
     )
     row = cursor.fetchone()
 
@@ -714,13 +928,17 @@ def bet_created(browser, bet_type, amount):
         return False
 
     browser.execute_script("arguments[0].scrollIntoView({block:'center'});", button)
-    time.sleep(0.3)
+    time.sleep(0.2)
+    keep_browser_active(browser)
 
     try:
-        button.click()
-    except (ElementClickInterceptedException, ElementNotInteractableException):
-        print(bet_type.upper(), "normal click नहीं हुआ। JavaScript click हो रहा है...")
         browser.execute_script("arguments[0].click();", button)
+    except Exception:
+        try:
+            button.click()
+        except (ElementClickInterceptedException, ElementNotInteractableException):
+            print(bet_type.upper(), "normal click नहीं हुआ। JavaScript click हो रहा है...")
+            browser.execute_script("arguments[0].click();", button)
 
     number = None
     for attempt in range(15):
@@ -826,17 +1044,32 @@ def prepare_bet(browser, cursor, db, serial_number):
             f"[DRY RUN] Serial {serial_number} के लिए "
             f"amount {BET_AMOUNT} की bet तैयार होती।"
         )
-        return
-        # not change
+        return True
+
     try:
-        last_big_small = get_last_big_small(browser)
-        if not last_big_small:
-            result_text, latest_result = get_latest_result(browser)
-            last_big_small = latest_result
+        if get_serial_number(browser) != serial_number:
+            print("Serial बदल गया। अगले round में bet बनेगी।")
+            return False
+
+        remaining = get_remaining_seconds(browser)
+        print("Bet time left:", remaining)
+        if remaining is not None and remaining < MIN_SECONDS_TO_BET:
+            print("Bet window बहुत कम है। अगले round का इंतजार।")
+            return False
+
+        last_big_small = None
+        for attempt in range(8):
+            last_big_small = get_last_big_small(browser)
+            if not last_big_small:
+                result_text, latest_result = get_latest_result(browser)
+                last_big_small = latest_result
+            if last_big_small:
+                break
+            time.sleep(0.2)
 
         if not last_big_small:
-            print("Last BIG/SMALL result नहीं मिला।")
-            return
+            print("Last BIG/SMALL result नहीं मिला। दोबारा कोशिश होगी।")
+            return False
 
         print("Last result:", last_big_small.upper(), "इसका amount popup खुलेगा।")
         amount = get_next_bet_amount(cursor)
@@ -845,10 +1078,53 @@ def prepare_bet(browser, cursor, db, serial_number):
 
         if form_is_ready:
             print(f"Serial {serial_number} के लिए form तैयार है।")
-        else:
-            print(f"Serial {serial_number} के लिए popup नहीं खुला।")
+            return True
+
+        print(f"Serial {serial_number} के लिए popup नहीं खुला। दोबारा कोशिश होगी।")
+        return False
     except Exception as error:
         print("Bet prepare error, system चलता रहेगा:", error)
+        return False
+
+
+def serial_has_bet(cursor, serial_number):
+    clause, params = user_sql([serial_number])
+    cursor.execute(
+        f"""
+        SELECT `user_bet`, `amount`
+        FROM `data`
+        WHERE `number` = %s
+          {clause}
+        ORDER BY `id` DESC
+        LIMIT 1
+        """,
+        params,
+    )
+    row = cursor.fetchone()
+    return bool(row and row[0] and row[1] is not None)
+
+
+def ensure_bet_for_serial(browser, cursor, db, serial_number):
+    if serial_has_bet(cursor, serial_number):
+        return True
+
+    for attempt in range(4):
+        current = get_serial_number(browser)
+        if current != serial_number:
+            print("Round बदल गया। Current serial पर bet लगेगी:", current)
+            return False
+
+        remaining = get_remaining_seconds(browser)
+        if remaining is not None and remaining < MIN_SECONDS_TO_BET:
+            return False
+
+        if prepare_bet(browser, cursor, db, serial_number):
+            return True
+        if serial_has_bet(cursor, serial_number):
+            return True
+        time.sleep(0.3)
+
+    return serial_has_bet(cursor, serial_number)
 
 
 
@@ -863,11 +1139,51 @@ def prepare_bet(browser, cursor, db, serial_number):
 
 
 
+
+
+def save_pending_results(browser, cursor, db, saved_results):
+    result_records = get_result_records(browser)
+    for result_serial, result_type in result_records:
+        result_key = (result_serial, result_type)
+        if result_key not in saved_results:
+            save_game_result(cursor, db, result_serial, result_type)
+            saved_results.add(result_key)
+
+
+def wait_for_bet_result(browser, cursor, db, saved_results, serial_number):
+    if not serial_number:
+        return
+
+    for attempt in range(4):
+        remaining = get_remaining_seconds(browser)
+        if remaining is not None and remaining >= 20:
+            save_pending_results(browser, cursor, db, saved_results)
+            return
+
+        save_pending_results(browser, cursor, db, saved_results)
+        clause, params = user_sql([serial_number])
+        cursor.execute(
+            f"""
+            SELECT `status`
+            FROM `data`
+            WHERE `number` = %s
+              AND `user_bet` IS NOT NULL
+              {clause}
+            ORDER BY `id` DESC
+            LIMIT 1
+            """,
+            params,
+        )
+        row = cursor.fetchone()
+        if row and row[0] in (1, -1):
+            return
+        time.sleep(0.3)
 
 
 def watch_serial_numbers(browser, cursor, db):
-    global SESSION_STARTED_AT
+    global SESSION_STARTED_AT, SESSION_MAIN_AMOUNT, SESSION_TARGET_PROFIT
     SESSION_STARTED_AT = datetime.now()
+    SESSION_MAIN_AMOUNT, SESSION_TARGET_PROFIT = get_risk_limits()
 
     old_serial = None
     for attempt in range(40):
@@ -878,8 +1194,10 @@ def watch_serial_numbers(browser, cursor, db):
         time.sleep(1)
 
     print("Initial serial:", old_serial)
+    serial_seen_at = {}
     if old_serial:
-        prepare_bet(browser, cursor, db, old_serial)
+        serial_seen_at[old_serial] = time.time()
+        save_serial(cursor, db, old_serial)
 
     # Page खुलते समय मौजूद result को पुराना result माना जाता है।
     old_result_text, old_result_type = get_latest_result(browser)
@@ -890,63 +1208,95 @@ def watch_serial_numbers(browser, cursor, db):
     # एक result को बार-बार database में update होने से रोकता है।
     saved_results = set()
 
-    # Program बंद होने तक हर एक सेकंड में serial check होता है।
+    # Program बंद होने तक हर round check होता है।
+    # 5 सेकंड wait serial-first-seen से गिना जाता है, इसलिए बीच के round miss नहीं होते।
     while True:
-        new_serial = get_serial_number(browser)
-        if not new_serial:
-            time.sleep(POLL_INTERVAL_SECONDS)
-            continue
+        try:
+            keep_system_awake()
+            keep_browser_active(browser)
+            new_serial = get_serial_number(browser)
+            if not new_serial:
+                time.sleep(0.3)
+                continue
 
-        # Latest BIG/SMALL result इस आसान variable में store होता है।
-        new_result_text, latest_result = get_latest_result(browser)
-
-        # Game history से मिले नए period results database में save करता है।
-        result_records = get_result_records(browser)
-
-        new_result_saved = False
-
-        for result_serial, result_type in result_records:
-            result_key = (result_serial, result_type)
-
-            if result_key not in saved_results:
-                save_game_result(
-                    cursor,
-                    db,
-                    result_serial,
-                    result_type,
-                )
-                saved_results.add(result_key)
-                new_result_saved = True
-
-        if new_result_saved and session_should_stop(cursor):
-            print("Monitoring बंद हो गई।")
-            return
-
-        # नया result आने पर केवल console में BIG/SMALL दिखाता है।
-        if new_result_text and new_result_text != old_result_text:
-            old_result_text = new_result_text
-
-            if latest_result:
-                print("Latest result:", latest_result.upper())
-
-        # Serial बदलने पर उसे database में save करता है।
-        if new_serial != old_serial:
-            print("Serial बदला:", old_serial, "से", new_serial)
-            old_serial = new_serial
-            save_serial(cursor, db, new_serial)
-
-            # नया serial आने के बाद तय समय तक इंतजार करता है।
-            time.sleep(BET_PREPARE_DELAY_SECONDS)
+            new_result_text, latest_result = get_latest_result(browser)
+            save_pending_results(browser, cursor, db, saved_results)
 
             if session_should_stop(cursor):
                 print("Monitoring बंद हो गई।")
+                close_browser(browser)
                 return
 
-            # वही serial active हो तो form तैयार करता है।
-            if get_serial_number(browser) == new_serial:
-                prepare_bet(browser, cursor, db, new_serial)
+            if new_result_text and new_result_text != old_result_text:
+                old_result_text = new_result_text
+                if latest_result:
+                    print("Latest result:", latest_result.upper())
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+            if new_serial not in serial_seen_at:
+                if old_serial and old_serial.isdigit() and new_serial.isdigit():
+                    gap = int(new_serial) - int(old_serial)
+                    if gap > 1:
+                        print(
+                            "Gap मिला:",
+                            gap - 1,
+                            "serial miss।",
+                            old_serial,
+                            "से",
+                            new_serial,
+                        )
+                print("Serial बदला:", old_serial, "से", new_serial)
+                remaining_now = get_remaining_seconds(browser)
+                # Round पहले से 5 सेकंड से ज्यादा चल चुका हो तो और wait मत करो।
+                if remaining_now is not None and remaining_now <= 25:
+                    serial_seen_at[new_serial] = time.time() - BET_PREPARE_DELAY_SECONDS
+                else:
+                    serial_seen_at[new_serial] = time.time()
+                old_serial = new_serial
+                save_serial(cursor, db, new_serial)
+
+            elapsed = time.time() - serial_seen_at[new_serial]
+            if elapsed < BET_PREPARE_DELAY_SECONDS:
+                time.sleep(0.2)
+                continue
+
+            if not serial_has_bet(cursor, new_serial):
+                remaining = get_remaining_seconds(browser)
+                if remaining is None or remaining >= MIN_SECONDS_TO_BET:
+                    print(
+                        "Bet create:",
+                        new_serial,
+                        "wait=",
+                        round(elapsed, 1),
+                        "sec",
+                    )
+                    ensure_bet_for_serial(browser, cursor, db, new_serial)
+
+                    # Bet के दौरान serial आगे बढ़ गया हो तो तुरंत current पर लगाना।
+                    current = get_serial_number(browser)
+                    if current and current != new_serial:
+                        if current not in serial_seen_at:
+                            print("Busy में नया serial आया:", current)
+                            remaining_now = get_remaining_seconds(browser)
+                            if remaining_now is not None and remaining_now <= 25:
+                                serial_seen_at[current] = (
+                                    time.time() - BET_PREPARE_DELAY_SECONDS
+                                )
+                            else:
+                                serial_seen_at[current] = time.time()
+                            old_serial = current
+                            save_serial(cursor, db, current)
+
+            time.sleep(0.2)
+        except StaleElementReferenceException as error:
+            print("Loss book के बाद page बदली। Starting bet जारी रहेगी:", error)
+            time.sleep(0.5)
+
+
+def close_browser(browser):
+    try:
+        browser.quit()
+    except Exception:
+        pass
 
 
 def userdata(phone_number, password_text):
@@ -963,8 +1313,13 @@ def userdata(phone_number, password_text):
     browser = connect_chrome()
 
     try:
+        keep_system_awake()
+        print("Screen off / दूसरी tab पर होने पर भी bot चलता रहेगा।")
+        if USER_ID:
+            print("User ID:", USER_ID, "Mobile:", phone_number)
         print("1. Login page load हो रहा है...")
         browser.get(LOGIN_URL)
+        harden_browser_for_background(browser)
         time.sleep(2)
 
         phone = None
@@ -1000,12 +1355,15 @@ def userdata(phone_number, password_text):
         time.sleep(2)
 
         reload_win_go_page(browser)
+        harden_browser_for_background(browser)
+        keep_browser_active(browser)
         watch_serial_numbers(browser, cursor, db)
     except KeyboardInterrupt:
         print("Monitoring बंद किया गया।")
     except InvalidSessionIdException:
         print("Chrome connection टूट गई। Settings से दोबारा Submit करो।")
     finally:
+        allow_system_sleep()
         cursor.close()
         db.close()
 
