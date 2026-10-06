@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 import time
 import mysql.connector
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
@@ -20,6 +21,8 @@ from selenium.common.exceptions import (
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -57,10 +60,16 @@ SESSION_TARGET_PROFIT = None
 CHROME_DEBUG_PORT = 9222
 CHROME_DEBUG_PROFILE = Path(__file__).parent / "chrome-debug-profile"
 GAME_SITE = os.getenv("GAME_SITE", "damanvipgames.com").strip() or "damanvipgames.com"
-LOGIN_URL = f"https://{GAME_SITE}/#/login"
+LOGIN_URL = (
+    os.getenv("GAME_LOGIN_URL", "").strip()
+    or f"https://{GAME_SITE}/#/login"
+)
 WINGO_URL = (
-    f"https://{GAME_SITE}/#/saas/Lottery/WinGo"
-    f"?gameCode=WinGo_30S&lottery=WinGo"
+    os.getenv("GAME_WINGO_URL", "").strip()
+    or (
+        f"https://{GAME_SITE}/#/saas/Lottery/WinGo"
+        f"?gameCode=WinGo_30S&lottery=WinGo"
+    )
 )
 
 
