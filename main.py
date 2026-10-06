@@ -184,9 +184,15 @@ def connect_chrome():
     options.add_argument("--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache")
     options.add_argument("--disable-hang-monitor")
     options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
     options.add_argument("--window-size=1200,900")
+    options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/154.0.0.0 Safari/537.36"
+    )
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
@@ -207,6 +213,15 @@ def connect_chrome():
         print("Chrome headless mode (AWS/server) चालू है।")
 
     browser = webdriver.Chrome(options=options)
+    try:
+        browser.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            },
+        )
+    except Exception:
+        pass
     harden_browser_for_background(browser)
     return browser
 
@@ -485,12 +500,23 @@ def dismiss_popups(browser):
         reward_buttons = browser.find_elements(
             By.CLASS_NAME, "reward-amount-dialog__button"
         )
+        cancel_buttons = browser.find_elements(
+            By.XPATH,
+            "//*[self::button or contains(@class,'van-button')]"
+            "[normalize-space()='Cancel' or normalize-space()='Close' or normalize-space()='OK']",
+        )
 
         if announcement_buttons:
             announcement_buttons[0].click()
             time.sleep(0.3)
         elif reward_buttons:
             reward_buttons[0].click()
+            time.sleep(0.3)
+        elif cancel_buttons:
+            try:
+                cancel_buttons[0].click()
+            except Exception:
+                browser.execute_script("arguments[0].click();", cancel_buttons[0])
             time.sleep(0.3)
         else:
             break
@@ -1341,8 +1367,8 @@ def page_toast_text(browser):
         ".van-toast",
         ".van-notify",
         ".van-dialog__message",
-        "[class*='toast']",
-        "[class*='message']",
+        ".van-loading__text",
+        "[class*='van-toast']",
     ]
     texts = []
     for css in selectors:
@@ -1351,13 +1377,31 @@ def page_toast_text(browser):
                 try:
                     if el.is_displayed():
                         text = (el.text or "").strip()
-                        if text and text not in texts:
+                        if text and text not in texts and len(text) < 120:
                             texts.append(text)
                 except StaleElementReferenceException:
                     continue
         except Exception:
             continue
     return " | ".join(texts[:5])
+
+
+def is_login_loading(browser):
+    try:
+        loaders = browser.find_elements(
+            By.CSS_SELECTOR,
+            ".van-loading, .van-toast--loading, [class*='loading']",
+        )
+        for el in loaders:
+            try:
+                if el.is_displayed():
+                    return True
+            except StaleElementReferenceException:
+                continue
+        toast = page_toast_text(browser).lower()
+        return "loading" in toast
+    except Exception:
+        return False
 
 
 def dump_login_controls(browser):
@@ -1516,18 +1560,29 @@ def userdata(phone_number, password_text):
         fill_input(browser, password, password_text)
 
         print("3. Login हो रहा है...")
+        dismiss_popups(browser)
         click_login_submit(browser, password)
 
-        for attempt in range(20):
+        for attempt in range(45):
+            if not login_still_open(browser):
+                break
+            if is_login_loading(browser):
+                if attempt % 5 == 0:
+                    print("Login API loading... wait", attempt)
+                time.sleep(1)
+                continue
             toast = page_toast_text(browser)
             if toast:
                 print("Login message:", toast)
-            if not login_still_open(browser):
-                break
             time.sleep(0.5)
         else:
             toast = page_toast_text(browser)
             debug_page_state(browser, "login-failed")
+            if is_login_loading(browser) or "loading" in (toast or "").lower():
+                raise Exception(
+                    "Login loading अटका। AWS IP block हो सकता है या password गलत। "
+                    "पहले browser से damanvipgames.com login करके verify करो।"
+                )
             extra = f" Site message: {toast}" if toast else ""
             raise Exception(
                 "Login नहीं हुआ। Mobile/password check करो।" + extra
