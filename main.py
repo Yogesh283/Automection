@@ -56,7 +56,7 @@ SESSION_MAIN_AMOUNT = None
 SESSION_TARGET_PROFIT = None
 CHROME_DEBUG_PORT = 9222
 CHROME_DEBUG_PROFILE = Path(__file__).parent / "chrome-debug-profile"
-GAME_SITE = os.getenv("GAME_SITE", "updowanfx.com").strip() or "updowanfx.com"
+GAME_SITE = os.getenv("GAME_SITE", "damanvipgames.com").strip() or "damanvipgames.com"
 LOGIN_URL = f"https://{GAME_SITE}/#/login"
 WINGO_URL = (
     f"https://{GAME_SITE}/#/saas/Lottery/WinGo"
@@ -1312,6 +1312,12 @@ def debug_page_state(browser, label):
         url = browser.current_url or ""
         title = browser.title or ""
         print(f"[{label}] URL: {url} | title: {title}")
+        shot = Path(__file__).parent / f"debug-{label.replace(' ', '_')}.png"
+        try:
+            browser.save_screenshot(str(shot))
+            print(f"[{label}] screenshot: {shot.name}")
+        except Exception:
+            pass
     except Exception as error:
         print(f"[{label}] page state error:", error)
 
