@@ -12,6 +12,7 @@ from selenium import webdriver
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
+    InvalidElementStateException,
     InvalidSessionIdException,
     NoSuchElementException,
     StaleElementReferenceException,
@@ -1292,6 +1293,46 @@ def watch_serial_numbers(browser, cursor, db):
             time.sleep(0.5)
 
 
+def wait_for_interactable(browser, by, value, timeout=20):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            for el in browser.find_elements(by, value):
+                try:
+                    if el.is_displayed() and el.is_enabled():
+                        return el
+                except StaleElementReferenceException:
+                    continue
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return None
+
+
+def fill_input(browser, element, text):
+    try:
+        element.click()
+        time.sleep(0.15)
+        element.clear()
+        element.send_keys(text)
+        return
+    except (ElementNotInteractableException, InvalidElementStateException, ElementClickInterceptedException):
+        pass
+    browser.execute_script(
+        """
+        const el = arguments[0];
+        const value = arguments[1];
+        el.focus();
+        el.value = '';
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        """,
+        element,
+        text,
+    )
+
+
 def close_browser(browser):
     try:
         browser.quit()
@@ -1320,31 +1361,35 @@ def userdata(phone_number, password_text):
         print("1. Login page load हो रहा है...")
         browser.get(LOGIN_URL)
         harden_browser_for_background(browser)
-        time.sleep(2)
+        time.sleep(3)
+        dismiss_popups(browser)
 
-        phone = None
-        for attempt in range(20):
-            fields = browser.find_elements(By.NAME, "userNumber")
-            if fields and fields[0].is_displayed():
-                phone = fields[0]
-                break
-            time.sleep(0.5)
-
+        phone = wait_for_interactable(browser, By.NAME, "userNumber", timeout=25)
         if phone is None:
             raise Exception("Login form नहीं मिला।")
 
         print("2. Login data fill हो रहा है...")
-        phone.clear()
-        phone.send_keys(phone_number)
+        fill_input(browser, phone, phone_number)
 
-        password = browser.find_element(
-            By.CSS_SELECTOR, 'input[placeholder="Password"]'
+        password = wait_for_interactable(
+            browser, By.CSS_SELECTOR, 'input[placeholder="Password"]', timeout=15
         )
-        password.clear()
-        password.send_keys(password_text)
+        if password is None:
+            raise Exception("Password field नहीं मिला।")
+        fill_input(browser, password, password_text)
 
         print("3. Login हो रहा है...")
-        password.send_keys(Keys.ENTER)
+        try:
+            password.send_keys(Keys.ENTER)
+        except (ElementNotInteractableException, InvalidElementStateException):
+            browser.execute_script(
+                """
+                const form = arguments[0].closest('form');
+                if (form) { form.requestSubmit ? form.requestSubmit() : form.submit(); }
+                else { arguments[0].dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }
+                """,
+                password,
+            )
         time.sleep(3)
 
         print("4. Popups बंद हो रहे हैं...")
