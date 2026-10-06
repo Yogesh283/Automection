@@ -1336,6 +1336,66 @@ def login_still_open(browser):
     return False
 
 
+def page_toast_text(browser):
+    selectors = [
+        ".van-toast",
+        ".van-notify",
+        ".van-dialog__message",
+        "[class*='toast']",
+        "[class*='message']",
+    ]
+    texts = []
+    for css in selectors:
+        try:
+            for el in browser.find_elements(By.CSS_SELECTOR, css):
+                try:
+                    if el.is_displayed():
+                        text = (el.text or "").strip()
+                        if text and text not in texts:
+                            texts.append(text)
+                except StaleElementReferenceException:
+                    continue
+        except Exception:
+            continue
+    return " | ".join(texts[:5])
+
+
+def click_login_submit(browser, password_element):
+    button_xpaths = [
+        "//button[contains(translate(normalize-space(.),'LOGIN','login'),'login')]",
+        "//div[contains(@class,'van-button')][contains(translate(normalize-space(.),'LOGIN','login'),'login')]",
+        "//*[self::button or self::div][contains(@class,'login')]",
+        "//button[@type='submit']",
+    ]
+    for xpath in button_xpaths:
+        buttons = browser.find_elements(By.XPATH, xpath)
+        for button in buttons:
+            try:
+                if not button.is_displayed():
+                    continue
+                try:
+                    button.click()
+                except (ElementClickInterceptedException, ElementNotInteractableException):
+                    browser.execute_script("arguments[0].click();", button)
+                return True
+            except StaleElementReferenceException:
+                continue
+
+    try:
+        password_element.send_keys(Keys.ENTER)
+        return True
+    except (ElementNotInteractableException, InvalidElementStateException):
+        browser.execute_script(
+            """
+            const form = arguments[0].closest('form');
+            if (form) { form.requestSubmit ? form.requestSubmit() : form.submit(); }
+            else { arguments[0].dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }
+            """,
+            password_element,
+        )
+        return True
+
+
 def wait_for_interactable(browser, by, value, timeout=20):
     end = time.time() + timeout
     while time.time() < end:
@@ -1422,23 +1482,21 @@ def userdata(phone_number, password_text):
         fill_input(browser, password, password_text)
 
         print("3. Login हो रहा है...")
-        try:
-            password.send_keys(Keys.ENTER)
-        except (ElementNotInteractableException, InvalidElementStateException):
-            browser.execute_script(
-                """
-                const form = arguments[0].closest('form');
-                if (form) { form.requestSubmit ? form.requestSubmit() : form.submit(); }
-                else { arguments[0].dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }
-                """,
-                password,
-            )
-        time.sleep(3)
+        click_login_submit(browser, password)
 
-        if login_still_open(browser):
+        for attempt in range(20):
+            toast = page_toast_text(browser)
+            if toast:
+                print("Login message:", toast)
+            if not login_still_open(browser):
+                break
+            time.sleep(0.5)
+        else:
+            toast = page_toast_text(browser)
             debug_page_state(browser, "login-failed")
+            extra = f" Site message: {toast}" if toast else ""
             raise Exception(
-                "Login नहीं हुआ। Mobile/password गलत हैं या site बदल गई।"
+                "Login नहीं हुआ। Mobile/password check करो।" + extra
             )
 
         debug_page_state(browser, "login-ok")
