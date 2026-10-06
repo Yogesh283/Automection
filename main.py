@@ -56,9 +56,12 @@ SESSION_MAIN_AMOUNT = None
 SESSION_TARGET_PROFIT = None
 CHROME_DEBUG_PORT = 9222
 CHROME_DEBUG_PROFILE = Path(__file__).parent / "chrome-debug-profile"
-GAME_SITE = "damanvipgames.com"
-LOGIN_URL = "https://damanvipgames.com/#/login"
-WINGO_URL = "https://damanvipgames.com/#/saas/Lottery/WinGo?gameCode=WinGo_30S&lottery=WinGo"
+GAME_SITE = os.getenv("GAME_SITE", "updowanfx.com").strip() or "updowanfx.com"
+LOGIN_URL = f"https://{GAME_SITE}/#/login"
+WINGO_URL = (
+    f"https://{GAME_SITE}/#/saas/Lottery/WinGo"
+    f"?gameCode=WinGo_30S&lottery=WinGo"
+)
 
 
 def chrome_debug_running():
@@ -568,15 +571,18 @@ def open_win_go(browser):
 
     print("Win Go card नहीं मिला। Win Go URL खुल रहा है...")
     browser.get(WINGO_URL)
-    time.sleep(2)
+    time.sleep(4)
+    dismiss_popups(browser)
+    debug_page_state(browser, "after-wingo-url")
 
 
 def reload_win_go_page(browser):
     print("6. Win Go reload हो रहा है...")
     time.sleep(3)
-    browser.refresh()
-    time.sleep(2)
+    browser.get(WINGO_URL)
+    time.sleep(3)
     dismiss_popups(browser)
+    debug_page_state(browser, "after-wingo-reload")
     print("Win Go reload हो गया। अब amount popup खुलेगा।")
 
 
@@ -614,7 +620,9 @@ def get_serial_number(browser):
         (By.CLASS_NAME, SERIAL_CLASS),
         (By.CSS_SELECTOR, ".TimeLeft__C-id"),
         (By.CSS_SELECTOR, "[class*='TimeLeft__C-id']"),
+        (By.CSS_SELECTOR, "[class*='TimeLeft__C']"),
         (By.CSS_SELECTOR, "[class*='TimeLeft']"),
+        (By.XPATH, "//*[contains(@class,'TimeLeft') and string-length(normalize-space())>=10]"),
     ]
 
     try:
@@ -1192,6 +1200,12 @@ def watch_serial_numbers(browser, cursor, db):
         if old_serial:
             break
         print("Serial number का इंतजार हो रहा है...")
+        if attempt in (0, 10, 20, 30):
+            debug_page_state(browser, f"serial-wait-{attempt}")
+            dismiss_popups(browser)
+            if "wingo" not in (browser.current_url or "").lower():
+                browser.get(WINGO_URL)
+                time.sleep(2)
         time.sleep(1)
 
     print("Initial serial:", old_serial)
@@ -1293,6 +1307,29 @@ def watch_serial_numbers(browser, cursor, db):
             time.sleep(0.5)
 
 
+def debug_page_state(browser, label):
+    try:
+        url = browser.current_url or ""
+        title = browser.title or ""
+        print(f"[{label}] URL: {url} | title: {title}")
+    except Exception as error:
+        print(f"[{label}] page state error:", error)
+
+
+def login_still_open(browser):
+    try:
+        fields = browser.find_elements(By.NAME, "userNumber")
+        for field in fields:
+            try:
+                if field.is_displayed():
+                    return True
+            except StaleElementReferenceException:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 def wait_for_interactable(browser, by, value, timeout=20):
     end = time.time() + timeout
     while time.time() < end:
@@ -1392,6 +1429,15 @@ def userdata(phone_number, password_text):
             )
         time.sleep(3)
 
+        if login_still_open(browser):
+            debug_page_state(browser, "login-failed")
+            raise Exception(
+                "Login नहीं हुआ। Mobile/password गलत हैं या site बदल गई।"
+            )
+
+        debug_page_state(browser, "login-ok")
+        print("Game site:", GAME_SITE)
+
         print("4. Popups बंद हो रहे हैं...")
         dismiss_popups(browser)
         time.sleep(1)
@@ -1407,6 +1453,12 @@ def userdata(phone_number, password_text):
         print("Monitoring बंद किया गया।")
     except InvalidSessionIdException:
         print("Chrome connection टूट गई। Settings से दोबारा Submit करो।")
+    except Exception as error:
+        print("Bot error:", error)
+        try:
+            debug_page_state(browser, "bot-error")
+        except Exception:
+            pass
     finally:
         allow_system_sleep()
         cursor.close()
