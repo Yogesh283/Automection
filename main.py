@@ -529,7 +529,7 @@ def get_next_bet_amount(cursor):
 
 
 def dismiss_popups(browser):
-    for count in range(10):
+    for count in range(12):
         announcement_buttons = browser.find_elements(
             By.CLASS_NAME, "announcement-dialog__button"
         )
@@ -538,24 +538,51 @@ def dismiss_popups(browser):
         )
         cancel_buttons = browser.find_elements(
             By.XPATH,
-            "//*[self::button or contains(@class,'van-button')]"
-            "[normalize-space()='Cancel' or normalize-space()='Close' or normalize-space()='OK']",
+            "//*[self::button or contains(@class,'van-button') or @role='button']"
+            "[contains(normalize-space(.),'Cancel') or contains(normalize-space(.),'Close')"
+            " or contains(normalize-space(.),'OK') or contains(normalize-space(.),'Got it')]",
+        )
+        # Customer-service / tip dialog overlay
+        overlays = browser.find_elements(
+            By.CSS_SELECTOR, ".van-popup, .van-dialog, .van-overlay"
         )
 
         if announcement_buttons:
-            announcement_buttons[0].click()
+            try:
+                announcement_buttons[0].click()
+            except Exception:
+                browser.execute_script("arguments[0].click();", announcement_buttons[0])
             time.sleep(0.3)
         elif reward_buttons:
-            reward_buttons[0].click()
+            try:
+                reward_buttons[0].click()
+            except Exception:
+                browser.execute_script("arguments[0].click();", reward_buttons[0])
             time.sleep(0.3)
         elif cancel_buttons:
             try:
                 cancel_buttons[0].click()
             except Exception:
                 browser.execute_script("arguments[0].click();", cancel_buttons[0])
-            time.sleep(0.3)
+            print("Popup/dialog Cancel किया।")
+            time.sleep(0.4)
         else:
+            # Escape से भी overlay बंद करने की कोशिश
+            if any(_safe_displayed(el) for el in overlays):
+                try:
+                    from selenium.webdriver.common.action_chains import ActionChains
+                    ActionChains(browser).send_keys(Keys.ESCAPE).perform()
+                    time.sleep(0.3)
+                except Exception:
+                    pass
             break
+
+
+def _safe_displayed(el):
+    try:
+        return el.is_displayed()
+    except Exception:
+        return False
 
 
 def is_win_go_open(browser):
