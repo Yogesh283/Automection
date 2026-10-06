@@ -1360,19 +1360,44 @@ def page_toast_text(browser):
     return " | ".join(texts[:5])
 
 
+def dump_login_controls(browser):
+    try:
+        phone_vals = []
+        for el in browser.find_elements(By.NAME, "userNumber"):
+            phone_vals.append(el.get_attribute("value") or "")
+        print("Phone field value:", phone_vals)
+
+        buttons = browser.execute_script(
+            """
+            return Array.from(document.querySelectorAll('button, .van-button, [role="button"]'))
+              .filter(el => !!(el.offsetWidth || el.offsetHeight))
+              .map(el => (el.innerText || el.textContent || '').trim().slice(0, 40));
+            """
+        )
+        print("Visible buttons:", buttons)
+    except Exception as error:
+        print("Login controls dump failed:", error)
+
+
 def click_login_submit(browser, password_element):
+    dump_login_controls(browser)
+
     button_xpaths = [
+        "//button[contains(@class,'van-button--primary')]",
+        "//div[contains(@class,'van-button--primary')]",
         "//button[contains(translate(normalize-space(.),'LOGIN','login'),'login')]",
         "//div[contains(@class,'van-button')][contains(translate(normalize-space(.),'LOGIN','login'),'login')]",
-        "//*[self::button or self::div][contains(@class,'login')]",
+        "//*[contains(normalize-space(.),'Log in') or contains(normalize-space(.),'Login') or contains(normalize-space(.),'登录')]",
         "//button[@type='submit']",
     ]
     for xpath in button_xpaths:
         buttons = browser.find_elements(By.XPATH, xpath)
-        for button in buttons:
+        for button in reversed(buttons):
             try:
                 if not button.is_displayed():
                     continue
+                label = (button.text or "").strip()
+                print("Login click:", label or xpath)
                 try:
                     button.click()
                 except (ElementClickInterceptedException, ElementNotInteractableException):
@@ -1381,6 +1406,7 @@ def click_login_submit(browser, password_element):
             except StaleElementReferenceException:
                 continue
 
+    print("Login button नहीं मिला, Enter try हो रहा है...")
     try:
         password_element.send_keys(Keys.ENTER)
         return True
@@ -1418,16 +1444,20 @@ def fill_input(browser, element, text):
         time.sleep(0.15)
         element.clear()
         element.send_keys(text)
-        return
     except (ElementNotInteractableException, InvalidElementStateException, ElementClickInterceptedException):
         pass
+
+    # Vue/Vant: native value + input events ताकि bind update हो।
     browser.execute_script(
         """
         const el = arguments[0];
         const value = arguments[1];
         el.focus();
         el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
         el.value = value;
+        const tracker = el._valueTracker;
+        if (tracker) tracker.setValue('');
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         """,
@@ -1475,8 +1505,12 @@ def userdata(phone_number, password_text):
         fill_input(browser, phone, phone_number)
 
         password = wait_for_interactable(
-            browser, By.CSS_SELECTOR, 'input[placeholder="Password"]', timeout=15
+            browser, By.CSS_SELECTOR, 'input[placeholder="Password"]', timeout=10
         )
+        if password is None:
+            password = wait_for_interactable(
+                browser, By.CSS_SELECTOR, 'input[type="password"]', timeout=10
+            )
         if password is None:
             raise Exception("Password field नहीं मिला।")
         fill_input(browser, password, password_text)
