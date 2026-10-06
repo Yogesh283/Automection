@@ -1390,18 +1390,84 @@ def is_login_loading(browser):
     try:
         loaders = browser.find_elements(
             By.CSS_SELECTOR,
-            ".van-loading, .van-toast--loading, [class*='loading']",
+            ".van-toast--loading, .van-loading--circular, .van-overlay + .van-toast",
         )
         for el in loaders:
             try:
                 if el.is_displayed():
-                    return True
+                    text = (el.text or "").strip().lower()
+                    if "loading" in text or el.get_attribute("class"):
+                        return "loading" in text or "van-toast--loading" in (
+                            el.get_attribute("class") or ""
+                        )
             except StaleElementReferenceException:
                 continue
         toast = page_toast_text(browser).lower()
-        return "loading" in toast
+        return toast == "loading..." or toast.startswith("loading")
     except Exception:
         return False
+
+
+def fill_input(browser, element, text):
+    text = str(text)
+    try:
+        element.click()
+        time.sleep(0.1)
+        element.send_keys(Keys.CONTROL, "a")
+        element.send_keys(Keys.BACKSPACE)
+    except Exception:
+        pass
+
+    # Vue/React controlled inputs: native value setter जरूरी है।
+    browser.execute_script(
+        """
+        const el = arguments[0];
+        const value = String(arguments[1]);
+        el.focus();
+        const proto = window.HTMLInputElement.prototype;
+        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (desc && desc.set) {
+          desc.set.call(el, '');
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          desc.set.call(el, value);
+        } else {
+          el.value = value;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        """,
+        element,
+        text,
+    )
+
+    try:
+        current = element.get_attribute("value") or ""
+        if current != text:
+            element.clear()
+            element.send_keys(text)
+    except Exception:
+        pass
+
+
+def login_button_enabled(browser):
+    buttons = browser.find_elements(
+        By.XPATH,
+        "//button[normalize-space()='Log in' or normalize-space()='Login']"
+        " | //div[contains(@class,'van-button')][normalize-space()='Log in' or normalize-space()='Login']",
+    )
+    for button in buttons:
+        try:
+            if not button.is_displayed():
+                continue
+            classes = button.get_attribute("class") or ""
+            disabled_attr = button.get_attribute("disabled")
+            aria = button.get_attribute("aria-disabled")
+            if disabled_attr or aria == "true" or "disabled" in classes:
+                return False, button
+            return True, button
+        except StaleElementReferenceException:
+            continue
+    return False, None
 
 
 def dump_login_controls(browser):
@@ -1426,29 +1492,21 @@ def dump_login_controls(browser):
 def click_login_submit(browser, password_element):
     dump_login_controls(browser)
 
-    button_xpaths = [
-        "//button[contains(@class,'van-button--primary')]",
-        "//div[contains(@class,'van-button--primary')]",
-        "//button[contains(translate(normalize-space(.),'LOGIN','login'),'login')]",
-        "//div[contains(@class,'van-button')][contains(translate(normalize-space(.),'LOGIN','login'),'login')]",
-        "//*[contains(normalize-space(.),'Log in') or contains(normalize-space(.),'Login') or contains(normalize-space(.),'登录')]",
-        "//button[@type='submit']",
-    ]
-    for xpath in button_xpaths:
-        buttons = browser.find_elements(By.XPATH, xpath)
-        for button in reversed(buttons):
-            try:
-                if not button.is_displayed():
-                    continue
-                label = (button.text or "").strip()
-                print("Login click:", label or xpath)
-                try:
-                    button.click()
-                except (ElementClickInterceptedException, ElementNotInteractableException):
-                    browser.execute_script("arguments[0].click();", button)
-                return True
-            except StaleElementReferenceException:
-                continue
+    enabled, button = login_button_enabled(browser)
+    print("Login button enabled:", enabled)
+    if not enabled:
+        raise Exception(
+            "Log in button disabled है — phone/password Vue में bind नहीं हुए।"
+        )
+
+    if button is not None:
+        label = (button.text or "").strip()
+        print("Login click:", label or "Log in")
+        try:
+            button.click()
+        except (ElementClickInterceptedException, ElementNotInteractableException):
+            browser.execute_script("arguments[0].click();", button)
+        return True
 
     print("Login button नहीं मिला, Enter try हो रहा है...")
     try:
@@ -1482,34 +1540,6 @@ def wait_for_interactable(browser, by, value, timeout=20):
     return None
 
 
-def fill_input(browser, element, text):
-    try:
-        element.click()
-        time.sleep(0.15)
-        element.clear()
-        element.send_keys(text)
-    except (ElementNotInteractableException, InvalidElementStateException, ElementClickInterceptedException):
-        pass
-
-    # Vue/Vant: native value + input events ताकि bind update हो।
-    browser.execute_script(
-        """
-        const el = arguments[0];
-        const value = arguments[1];
-        el.focus();
-        el.value = '';
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.value = value;
-        const tracker = el._valueTracker;
-        if (tracker) tracker.setValue('');
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        """,
-        element,
-        text,
-    )
-
-
 def close_browser(browser):
     try:
         browser.quit()
@@ -1541,23 +1571,35 @@ def userdata(phone_number, password_text):
         time.sleep(3)
         dismiss_popups(browser)
 
-        phone = wait_for_interactable(browser, By.NAME, "userNumber", timeout=25)
-        if phone is None:
-            raise Exception("Login form नहीं मिला।")
-
         print("2. Login data fill हो रहा है...")
-        fill_input(browser, phone, phone_number)
+        password = None
+        for fill_try in range(5):
+            dismiss_popups(browser)
+            phone = wait_for_interactable(browser, By.NAME, "userNumber", timeout=10)
+            if phone is None:
+                raise Exception("Login form नहीं मिला।")
+            fill_input(browser, phone, phone_number)
 
-        password = wait_for_interactable(
-            browser, By.CSS_SELECTOR, 'input[placeholder="Password"]', timeout=10
-        )
-        if password is None:
             password = wait_for_interactable(
                 browser, By.CSS_SELECTOR, 'input[type="password"]', timeout=10
             )
-        if password is None:
-            raise Exception("Password field नहीं मिला।")
-        fill_input(browser, password, password_text)
+            if password is None:
+                raise Exception("Password field नहीं मिला।")
+            fill_input(browser, password, password_text)
+
+            phone_val = phone.get_attribute("value") or ""
+            enabled, _ = login_button_enabled(browser)
+            print(
+                f"Fill try {fill_try + 1}: phone={phone_val!r} login_enabled={enabled}"
+            )
+            if phone_val == str(phone_number) and enabled:
+                break
+            time.sleep(0.5)
+        else:
+            debug_page_state(browser, "fill-failed")
+            raise Exception(
+                "Phone/password UI में नहीं भरे। Vue bind fail — screenshot देखो।"
+            )
 
         print("3. Login हो रहा है...")
         dismiss_popups(browser)
