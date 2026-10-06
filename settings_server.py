@@ -22,21 +22,45 @@ MAIN_FILE = Path(__file__).parent / "main.py"
 _main_processes = {}
 
 
-def start_main_app(mobile_number, password_text, user_id):
+def stop_main_app(mobile_number):
     process = _main_processes.get(mobile_number)
-    if process is not None and process.poll() is None:
-        return False
+    if process is None:
+        return
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+    _main_processes.pop(mobile_number, None)
+
+
+def start_main_app(mobile_number, password_text, user_id):
+    # Same mobile फिर से Submit → पुराना bot बंद करके नया start।
+    stop_main_app(mobile_number)
 
     env = os.environ.copy()
     env["DAMAN_PHONE"] = str(mobile_number)
     env["DAMAN_PASSWORD"] = str(password_text)
     env["DAMAN_USER_ID"] = str(user_id)
     env["PYTHONUNBUFFERED"] = "1"
+    if not env.get("DISPLAY"):
+        env["DISPLAY"] = ":99"
+    if not env.get("HEADLESS"):
+        env["HEADLESS"] = "1"
+
+    log_path = Path(__file__).parent / f"bot-{user_id}.log"
+    log_file = open(log_path, "a", encoding="utf-8")
+    log_file.write(f"\n--- start user={user_id} mobile={mobile_number} ---\n")
+    log_file.flush()
 
     _main_processes[mobile_number] = subprocess.Popen(
         [sys.executable, "-u", str(MAIN_FILE)],
         cwd=str(Path(__file__).parent),
         env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
     return True
 
@@ -195,10 +219,7 @@ def settings(data: dict):
         }
 
     started = start_main_app(mobile_number, password_text, user_id)
-    if started:
-        message = f"User ID {user_id} start हो गया। Login अपने आप भरेगा।"
-    else:
-        message = f"User ID {user_id} पहले से चल रहा है।"
+    message = f"User ID {user_id} start हो गया। Login अपने आप भरेगा।"
 
     return {
         "success": True,
@@ -207,3 +228,4 @@ def settings(data: dict):
         "message": message,
         "data": save_data
     }
+
