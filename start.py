@@ -39,7 +39,7 @@ def main() -> None:
     print("AutoMection local server")
     print(f"Frontend + API : {settings_url}")
     print(f"Game site      : {os.getenv('GAME_SITE', '')}")
-    print("Start Bot form से bot Chrome new tab में चलेगा।")
+    print("Open the form and click Start Bot to launch Chrome.")
     print("=" * 50)
 
     def open_browser() -> None:
