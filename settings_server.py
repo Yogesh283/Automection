@@ -45,10 +45,15 @@ def start_main_app(mobile_number, password_text, user_id):
     env["DAMAN_PASSWORD"] = str(password_text)
     env["DAMAN_USER_ID"] = str(user_id)
     env["PYTHONUNBUFFERED"] = "1"
-    if not env.get("DISPLAY"):
-        env["DISPLAY"] = ":99"
-    if not env.get("HEADLESS"):
-        env["HEADLESS"] = "1"
+    if os.name == "nt":
+        # Local Windows: दिखने वाला Chrome + new tab automation
+        env.setdefault("HEADLESS", "0")
+        env.setdefault("CHROME_DEBUG", "1")
+    else:
+        if not env.get("DISPLAY"):
+            env["DISPLAY"] = ":99"
+        if not env.get("HEADLESS"):
+            env["HEADLESS"] = "1"
 
     log_path = Path(__file__).parent / f"bot-{user_id}.log"
     log_file = open(log_path, "a", encoding="utf-8")

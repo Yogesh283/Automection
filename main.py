@@ -176,7 +176,39 @@ def keep_browser_active(browser):
         pass
 
 
+def open_new_tab(browser, url):
+    before = list(browser.window_handles)
+    browser.execute_script("window.open('about:blank','_blank');")
+    time.sleep(0.4)
+    after = list(browser.window_handles)
+    new_handles = [handle for handle in after if handle not in before]
+    if new_handles:
+        browser.switch_to.window(new_handles[-1])
+    elif after:
+        browser.switch_to.window(after[-1])
+    browser.get(url)
+    print("New Chrome tab खोला:", url)
+
+
 def connect_chrome():
+    # Local Windows: दिखने वाला Chrome + remote debug (settings के साथ नया tab)।
+    # AWS/Linux: headless (server पर Chrome window नहीं दिखता)।
+    use_debug = os.getenv("CHROME_DEBUG", "").strip().lower() in ("1", "true", "yes")
+    if os.name == "nt" and os.getenv("CHROME_DEBUG", "1").strip() != "0":
+        use_debug = True
+
+    if use_debug:
+        start_debug_chrome("https://updowanfx.com/settings")
+        options = Options()
+        options.add_experimental_option(
+            "debuggerAddress",
+            f"127.0.0.1:{CHROME_DEBUG_PORT}",
+        )
+        browser = webdriver.Chrome(options=options)
+        harden_browser_for_background(browser)
+        print("Visible Chrome (debug) attach हो गया — automation new tab में चलेगी।")
+        return browser
+
     options = Options()
     options.add_argument("--disable-background-timer-throttling")
     options.add_argument("--disable-backgrounding-occluded-windows")
@@ -196,12 +228,14 @@ def connect_chrome():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
-    # AWS/Linux server pe display nahi hota. Local Windows pe pehle jaisa Chrome khulega.
     headless_env = os.getenv("HEADLESS", "").strip().lower()
     use_headless = headless_env in ("1", "true", "yes")
     if headless_env in ("0", "false", "no"):
         use_headless = False
     elif os.name != "nt" and not os.environ.get("DISPLAY"):
+        use_headless = True
+    elif os.name != "nt" and headless_env == "":
+        # Server default: headless
         use_headless = True
 
     if use_headless:
@@ -211,6 +245,8 @@ def connect_chrome():
         options.add_argument("--disable-gpu")
         options.add_argument("--remote-allow-origins=*")
         print("Chrome headless mode (AWS/server) चालू है।")
+    else:
+        print("Chrome visible mode चालू है।")
 
     browser = webdriver.Chrome(options=options)
     try:
@@ -1565,8 +1601,8 @@ def userdata(phone_number, password_text):
         print("Screen off / दूसरी tab पर होने पर भी bot चलता रहेगा।")
         if USER_ID:
             print("User ID:", USER_ID, "Mobile:", phone_number)
-        print("1. Login page load हो रहा है...")
-        browser.get(LOGIN_URL)
+        print("1. Login page new tab में खुल रहा है...")
+        open_new_tab(browser, LOGIN_URL)
         harden_browser_for_background(browser)
         time.sleep(3)
         dismiss_popups(browser)
