@@ -1,5 +1,86 @@
+# ============================================================
+# AutoMection - Python packages (pip)
+# ============================================================
 fastapi
 uvicorn[standard]
 python-dotenv
 mysql-connector-python
 selenium
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<4.1
+pydantic
+httpx
+pytest
+pytest-asyncio
+aiortc>=1.9
+av
+numpy
+pillow
+# Optional host packages for capture (Ubuntu):
+#   sudo apt install -y xvfb ffmpeg imagemagick x11-utils
+
+# ============================================================
+# Ubuntu - Chrome + dependencies (copy/paste)
+# ============================================================
+#
+# sudo apt update
+# sudo apt install -y \
+#   wget curl unzip ca-certificates gnupg \
+#   xvfb xdg-utils fonts-liberation fonts-noto-color-emoji \
+#   libasound2t64 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
+#   libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 \
+#   libnspr4 libnss3 libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 \
+#   libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 \
+#   libxrandr2 libxshmfence1 libxss1 libxtst6
+#
+# # If libasound2t64 fails on older Ubuntu, use:
+# # sudo apt install -y libasound2
+#
+# # Install Google Chrome
+# wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+# sudo apt install -y ./google-chrome-stable_current_amd64.deb
+# google-chrome --version
+#
+# # Fix missing deps if apt install complains
+# sudo apt -f install -y
+#
+# # Headless display for Selenium (legacy :99 for POST /settings only)
+# pgrep -a 'Xvfb :99' || Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp >/tmp/xvfb99.log 2>&1 &
+# export DISPLAY=:99 HEADLESS=1
+#
+# # Session live-view also needs:
+# sudo apt install -y ffmpeg imagemagick x11-utils
+# # Per-session Xvfb :100+ is started by session/display_manager.py (do not share :99)
+#
+# ============================================================
+# Ubuntu server - full project setup
+# ============================================================
+#
+# 1) Python
+# sudo apt install -y python3 python3-venv python3-pip
+#
+# 2) Project folder + venv + pip install
+# cd /path/to/AutoMection
+# python3 -m venv .venv-server
+# source .venv-server/bin/activate
+# pip install --upgrade pip
+# pip install -r requirements.txt
+#
+# 3) .env
+# cp .env.example .env
+# nano .env
+#
+# 4) Start server (8090 for CloudPanel)
+# set -a; source .env; set +a
+# export DISPLAY=:99 HEADLESS=1
+# nohup .venv-server/bin/uvicorn settings_server:app --host 127.0.0.1 --port 8090 > uvicorn.log 2>&1 &
+#
+# 5) Check
+# curl -s http://127.0.0.1:8090/settings | head
+# ss -tlnp | grep 8090
+#
+# Windows local:
+# run.bat
+#
+

@@ -8,3 +8,17 @@ frontend-settings.json
 .env
 last-hosting-start.json
 config.php
+bot-*.log
+debug-*.png
+zip.zip
+uvicorn.log
+chrome-profiles/
+chrome-profiles-test/
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/.idea/
+*.apk
+*.ap_
+*.dex

@@ -1,9 +1,9 @@
 """
-एक कमांड: frontend (settings UI) + FastAPI backend start.
-Bot Start Bot बटन से अपने आप चालू होगा।
+One command: start frontend (settings UI) + FastAPI backend.
+The bot starts automatically when you click Start Bot.
 
   python start.py
-  या:  run.bat
+  or:  run.bat
 """
 from __future__ import annotations
 
@@ -21,24 +21,24 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
 
-def main() -> None:
-    host = os.getenv("APP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-    port = int(os.getenv("APP_PORT", "8000") or "8000")
-    app_url = (
-        os.getenv("APP_URL", "").strip()
-        or f"http://{host}:{port}"
-    ).rstrip("/")
-    settings_url = f"{app_url}/settings"
+def require_env(name: str) -> str:
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        raise SystemExit(f"Set {name} in .env.")
+    return value
 
-    # Local Windows defaults for visible Chrome bot
-    if os.name == "nt":
-        os.environ.setdefault("HEADLESS", "0")
-        os.environ.setdefault("CHROME_DEBUG", "1")
+
+def main() -> None:
+    host = require_env("APP_HOST")
+    port = int(require_env("APP_PORT"))
+    app_url = require_env("APP_URL").rstrip("/")
+    settings_url = f"{app_url}/settings"
+    game_site = require_env("GAME_SITE")
 
     print("=" * 50)
     print("AutoMection local server")
     print(f"Frontend + API : {settings_url}")
-    print(f"Game site      : {os.getenv('GAME_SITE', '')}")
+    print(f"Game site      : {game_site}")
     print("Open the form and click Start Bot to launch Chrome.")
     print("=" * 50)
 

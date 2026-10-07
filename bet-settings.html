@@ -350,7 +350,7 @@
       <section class="panel level-section">
         <h2>Level Amount</h2>
         <p>
-          पहले सिर्फ Level 1 खुला रहेगा। Plus दबाने पर अगला level खुलेगा, ज्यादा से ज्यादा 10 तक।
+          Only Level 1 is open at first. Press Plus to open the next level, up to 10.
         </p>
         <div id="levelOptions" class="level-options"></div>
       </section>
@@ -416,8 +416,8 @@
     }
 
     function settingsPostUrl() {
-        // Local FastAPI और live domain दोनों पर /settings ही जाएगा।
-        // Live पर .htaccess settings.php को /settings से जोड़ता है।
+        // Both local FastAPI and live domain use /settings.
+        // On live hosting, /settings maps to the FastAPI route.
         return "/settings";
     }
 
@@ -575,16 +575,16 @@
         .then(function(result) {
             if (result.success) {
                 document.getElementById("message").textContent =
-                    result.message || "System start हो गया। Login हो रहा है।";
+                    result.message || "System started. Logging in...";
             } else {
                 document.getElementById("message").textContent =
-                    result.error || "Database में save नहीं हुआ।";
+                    result.error || "Failed to save to database.";
             }
             console.log(result);
         })
         .catch(function() {
             document.getElementById("message").textContent =
-                "Backend connect नहीं हुआ।";
+                "Could not connect to backend.";
         });
     });
 

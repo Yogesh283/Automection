@@ -1,23 +1,23 @@
 # AutoMection
 
-## Local run (एक कमांड)
+## Local run (one command)
 
 ```bat
 run.bat
 ```
 
-या:
+or:
 
 ```bat
 python start.py
 ```
 
-Browser खुलेगा: `http://127.0.0.1:8000/settings`  
-**Start Bot** → Chrome new tab में game login/automation।
+Browser opens: `http://127.0.0.1:8000/settings`  
+**Start Bot** -> game login/automation in a Chrome new tab.
 
 ## Config (`.env`)
 
-सभी URLs / DB यहीं से:
+All URLs / DB settings come from here:
 
 | Key | Example |
 |-----|---------|
@@ -27,4 +27,4 @@ Browser खुलेगा: `http://127.0.0.1:8000/settings`
 | `GAME_WINGO_URL` | full Win Go URL |
 | `DB_*` | MySQL |
 
-`.env.example` कॉपी करके `.env` बनाओ। कल URL बदलना हो तो सिर्फ `.env` अपडेट करो।
+Copy `.env.example` to `.env`. To change the game URL later, update `.env` only.

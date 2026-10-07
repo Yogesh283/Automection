@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Live view</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0f14; color: #e8eef2; font-family: sans-serif; }
+    #status { padding: 10px; font-size: 12px; background: rgba(15,28,36,.85); position: relative; z-index: 2; }
+    video { width: 100%; height: calc(100% - 40px); object-fit: contain; background: #000; display: block; }
+  </style>
+</head>
+<body>
+  <div id="status">Waiting…</div>
+  <video id="video" autoplay playsinline muted></video>
+  <script>
+    let pc = null;
+    let ws = null;
+
+    function setStatus(msg) {
+      document.getElementById("status").textContent = msg;
+      console.log(msg);
+    }
+
+    function wsUrl(apiBase, sessionId, token) {
+      const u = new URL(apiBase);
+      u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+      u.pathname = "/ws/webrtc/" + encodeURIComponent(sessionId);
+      u.search = "access_token=" + encodeURIComponent(token);
+      u.hash = "";
+      return u.toString();
+    }
+
+    async function startUpdowanLive(cfg) {
+      try {
+        if (ws) { try { ws.close(); } catch (e) {} }
+        if (pc) { try { pc.close(); } catch (e) {} }
+
+        const { apiBase, accessToken, sessionId } = cfg;
+        setStatus("Opening signaling…");
+
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+        });
+
+        pc.ontrack = (ev) => {
+          setStatus("Video track received");
+          const video = document.getElementById("video");
+          video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+          video.play().catch(() => {});
+        };
+
+        pc.onconnectionstatechange = () => {
+          setStatus("Peer state: " + pc.connectionState);
+        };
+
+        pc.onicecandidate = (ev) => {
+          if (!ev.candidate || !ws || ws.readyState !== 1) return;
+          ws.send(JSON.stringify({
+            type: "ice-candidate",
+            candidate: ev.candidate.toJSON(),
+          }));
+        };
+
+        // Recv-only transceiver so createOffer includes video m-line.
+        pc.addTransceiver("video", { direction: "recvonly" });
+
+        ws = new WebSocket(wsUrl(apiBase, sessionId, accessToken));
+
+        ws.onopen = () => setStatus("WebSocket open");
+        ws.onerror = () => setStatus("WebSocket error");
+        ws.onclose = () => setStatus("WebSocket closed");
+
+        ws.onmessage = async (ev) => {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "ready") {
+            setStatus("Creating offer…");
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            ws.send(JSON.stringify({ type: "offer", sdp: offer.sdp }));
+          } else if (msg.type === "answer") {
+            const sdp = msg.sdp || (msg.payload && msg.payload.sdp);
+            if (!sdp) {
+              setStatus("Answer missing SDP — server media may not be ready");
+              return;
+            }
+            await pc.setRemoteDescription({ type: "answer", sdp: sdp });
+            setStatus("Answer applied — waiting for video");
+          } else if (msg.type === "ice-candidate") {
+            try { await pc.addIceCandidate(msg.candidate); } catch (e) {}
+          } else if (msg.type === "error") {
+            setStatus("Error: " + msg.error);
+          }
+        };
+      } catch (e) {
+        setStatus("Failed: " + (e && e.message ? e.message : e));
+      }
+    }
+
+    window.startUpdowanLive = startUpdowanLive;
+  </script>
+</body>
+</html>
