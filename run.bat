@@ -10,7 +10,7 @@ call .venv\Scripts\activate.bat
 python -m pip install -r requirements.txt
 if not exist ".env" (
   copy /Y .env.example .env >nul
-  echo Created .env from .env.example — DB password भर लो।
+  echo Created .env from .env.example — fill in the DB password.
 )
 
 python start.py

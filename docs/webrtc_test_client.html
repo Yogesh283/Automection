@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UpdowanFX WebRTC Live View Test</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", sans-serif; }
+    body { margin: 24px; background: #f3f5f7; color: #14212b; }
+    label { display: block; margin-top: 12px; font-size: 13px; }
+    input { width: min(720px, 100%); padding: 8px; }
+    button { margin-top: 16px; margin-right: 8px; padding: 10px 16px; }
+    video { width: min(960px, 100%); background: #0b0f14; margin-top: 16px; aspect-ratio: 16/9; }
+    #log { white-space: pre-wrap; background: #fff; border: 1px solid #ccd5dd; padding: 12px; max-height: 240px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>WebRTC live-view test</h1>
+  <p>Use after <code>POST /api/session/start</code>. Confirm frames before claiming streaming works.</p>
+  <label>API base (http/https, no trailing slash)
+    <input id="base" value="http://127.0.0.1:8090" />
+  </label>
+  <label>Access token
+    <input id="token" />
+  </label>
+  <label>Session ID
+    <input id="sessionId" />
+  </label>
+  <button id="connect">Connect</button>
+  <button id="disconnect">Disconnect</button>
+  <div>Frames / track events: <strong id="frames">0</strong></div>
+  <video id="video" autoplay playsinline controls></video>
+  <h3>Log</h3>
+  <div id="log"></div>
+  <script>
+    let pc = null;
+    let ws = null;
+    let frameEvents = 0;
+
+    const log = (msg) => {
+      const el = document.getElementById("log");
+      el.textContent += msg + "\n";
+      el.scrollTop = el.scrollHeight;
+      console.log(msg);
+    };
+
+    const bump = () => {
+      frameEvents += 1;
+      document.getElementById("frames").textContent = String(frameEvents);
+    };
+
+    document.getElementById("disconnect").onclick = () => {
+      if (ws) ws.close();
+      if (pc) pc.close();
+      ws = null;
+      pc = null;
+      log("disconnected");
+    };
+
+    document.getElementById("connect").onclick = async () => {
+      const base = document.getElementById("base").value.replace(/\/$/, "");
+      const token = document.getElementById("token").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      if (!token || !sessionId) {
+        alert("token and sessionId required");
+        return;
+      }
+
+      const wsBase = base.replace(/^http/, "ws");
+      const url = `${wsBase}/ws/webrtc/${encodeURIComponent(sessionId)}?access_token=${encodeURIComponent(token)}`;
+      ws = new WebSocket(url);
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+      });
+
+      pc.ontrack = (ev) => {
+        bump();
+        log("ontrack kind=" + ev.track.kind);
+        const video = document.getElementById("video");
+        video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+        video.requestVideoFrameCallback?.(() => bump());
+      };
+
+      pc.onicecandidate = (ev) => {
+        if (!ev.candidate || !ws || ws.readyState !== 1) return;
+        ws.send(JSON.stringify({
+          type: "ice-candidate",
+          candidate: ev.candidate.toJSON(),
+        }));
+      };
+
+      ws.onmessage = async (ev) => {
+        const msg = JSON.parse(ev.data);
+        log("<< " + msg.type);
+        if (msg.type === "ready") {
+          const offer = await pc.createOffer({ offerToReceiveVideo: true });
+          await pc.setLocalDescription(offer);
+          ws.send(JSON.stringify({ type: "offer", sdp: offer.sdp }));
+        } else if (msg.type === "answer") {
+          await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp || msg.payload?.sdp });
+        } else if (msg.type === "ice-candidate") {
+          try {
+            await pc.addIceCandidate(msg.candidate);
+          } catch (e) {
+            log("ice error " + e);
+          }
+        } else if (msg.type === "error") {
+          log("error: " + msg.error);
+        }
+      };
+
+      ws.onopen = () => log("ws open");
+      ws.onclose = () => log("ws close");
+      ws.onerror = () => log("ws error");
+    };
+  </script>
+</body>
+</html>

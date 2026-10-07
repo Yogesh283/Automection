@@ -39,8 +39,20 @@ def stop_main_app(mobile_number):
     _main_processes.pop(mobile_number, None)
 
 
-def start_main_app(mobile_number, password_text, user_id):
-    # Same mobile फिर से Submit → पुराना bot बंद करके नया start।
+def get_main_process(mobile_number):
+    return _main_processes.get(mobile_number)
+
+
+def start_main_app(
+    mobile_number,
+    password_text,
+    user_id,
+    *,
+    chrome_user_data_dir=None,
+    display=None,
+    session_id=None,
+):
+    # Same mobile submitted again -> stop old bot and start new one.
     stop_main_app(mobile_number)
 
     env = os.environ.copy()
@@ -48,8 +60,17 @@ def start_main_app(mobile_number, password_text, user_id):
     env["DAMAN_PASSWORD"] = str(password_text)
     env["DAMAN_USER_ID"] = str(user_id)
     env["PYTHONUNBUFFERED"] = "1"
+    if chrome_user_data_dir:
+        env["CHROME_USER_DATA_DIR"] = str(chrome_user_data_dir)
+    if session_id:
+        env["APP_SESSION_ID"] = str(session_id)
+    if display:
+        # Session-isolated Xvfb: Chrome must render on that display for capture.
+        env["DISPLAY"] = str(display)
+        env["HEADLESS"] = "0"
+
     if os.name == "nt":
-        # Local Windows: दिखने वाला Chrome + new tab automation
+        # Local Windows: visible Chrome + new tab automation
         env.setdefault("HEADLESS", "0")
         env.setdefault("CHROME_DEBUG", "1")
     else:
@@ -212,7 +233,7 @@ def settings(data: dict):
         print("Database save failed:", error)
         return {
             "success": False,
-            "error": "Database में save नहीं हुआ।",
+            "error": "Failed to save to database.",
         }
 
     SETTINGS_FILE.write_text(
@@ -223,11 +244,11 @@ def settings(data: dict):
     if not mobile_number or not password_text:
         return {
             "success": False,
-            "error": "Mobile number और password दोनों चाहिए।",
+            "error": "Mobile number and password are both required.",
         }
 
     started = start_main_app(mobile_number, password_text, user_id)
-    message = f"User ID {user_id} start हो गया। Login अपने आप भरेगा।"
+    message = f"User ID {user_id} started. Login will fill automatically."
 
     return {
         "success": True,
@@ -236,4 +257,26 @@ def settings(data: dict):
         "message": message,
         "data": save_data
     }
+
+
+# --- APK/session infrastructure routers (do not replace /settings) ---
+try:
+    from api.auth import router as auth_router
+    from api.session_routes import router as session_router
+    from api.webrtc_signaling import router as webrtc_router
+    from infra.db import ensure_auth_session_schema
+
+    app.include_router(auth_router)
+    app.include_router(session_router)
+    app.include_router(webrtc_router)
+
+    @app.on_event("startup")
+    def _startup_schema():
+        try:
+            ensure_auth_session_schema()
+        except Exception as error:
+            print("Auth/session schema init skipped/failed:", type(error).__name__)
+
+except Exception as error:
+    print("Infrastructure routers not loaded:", type(error).__name__, error)
 

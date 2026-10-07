@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UpdowanFX</string>
+    <string name="login_title">UpdowanFX</string>
+    <string name="login_subtitle">App login (not game password)</string>
+    <string name="api_base">API base URL</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="sign_in">Sign in</string>
+    <string name="game_mobile">Game mobile number</string>
+    <string name="game_password">Game password</string>
+    <string name="start_session">Start session</string>
+    <string name="stop_session">Stop session</string>
+    <string name="open_live_view">Open live view</string>
+    <string name="session_hint">Starts server Chrome for your account. Live view uses WebRTC.</string>
+    <string name="starting_amount">Starting amount</string>
+    <string name="stop_loss">Stop loss</string>
+    <string name="target_profit">Target profit</string>
+    <string name="choice">Choice (big/small)</string>
+</resources>

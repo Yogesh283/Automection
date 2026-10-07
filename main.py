@@ -57,26 +57,25 @@ DRY_RUN = False
 SESSION_STARTED_AT = None
 SESSION_MAIN_AMOUNT = None
 SESSION_TARGET_PROFIT = None
-CHROME_DEBUG_PORT = 9222
-CHROME_DEBUG_PROFILE = Path(__file__).parent / "chrome-debug-profile"
-GAME_SITE = os.getenv("GAME_SITE", "damanvipgames.com").strip() or "damanvipgames.com"
-LOGIN_URL = (
-    os.getenv("GAME_LOGIN_URL", "").strip()
-    or f"https://{GAME_SITE}/#/login"
+CHROME_DEBUG_HOST = os.getenv("CHROME_DEBUG_HOST", "").strip() or "127.0.0.1"
+CHROME_DEBUG_PORT = int(os.getenv("CHROME_DEBUG_PORT", "").strip() or "9222")
+CHROME_DEBUG_PROFILE = Path(
+    os.getenv("CHROME_DEBUG_PROFILE", "").strip()
+    or (Path(__file__).parent / "chrome-debug-profile")
 )
-WINGO_URL = (
-    os.getenv("GAME_WINGO_URL", "").strip()
-    or (
-        f"https://{GAME_SITE}/#/saas/Lottery/WinGo"
-        f"?gameCode=WinGo_30S&lottery=WinGo"
+GAME_SITE = os.getenv("GAME_SITE", "").strip()
+LOGIN_URL = os.getenv("GAME_LOGIN_URL", "").strip()
+WINGO_URL = os.getenv("GAME_WINGO_URL", "").strip()
+if not GAME_SITE or not LOGIN_URL or not WINGO_URL:
+    raise SystemExit(
+        "Set GAME_SITE, GAME_LOGIN_URL, and GAME_WINGO_URL in .env."
     )
-)
 
 
 def chrome_debug_running():
     try:
         urllib.request.urlopen(
-            f"http://127.0.0.1:{CHROME_DEBUG_PORT}/json/version",
+            f"http://{CHROME_DEBUG_HOST}:{CHROME_DEBUG_PORT}/json/version",
             timeout=1,
         )
         return True
@@ -84,9 +83,16 @@ def chrome_debug_running():
         return False
 
 
-def start_debug_chrome(start_url="https://updowanfx.com/settings"):
+def start_debug_chrome(start_url=None):
     if chrome_debug_running():
         return
+
+    if not start_url:
+        start_url = (
+            os.getenv("APP_URL", "").strip().rstrip("/") + "/settings"
+            if os.getenv("APP_URL", "").strip()
+            else "about:blank"
+        )
 
     chrome_paths = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -100,7 +106,7 @@ def start_debug_chrome(start_url="https://updowanfx.com/settings"):
             break
 
     if chrome_exe is None:
-        raise Exception("Chrome नहीं मिला।")
+        raise Exception("Chrome not found.")
 
     CHROME_DEBUG_PROFILE.mkdir(exist_ok=True)
     subprocess.Popen(
@@ -117,7 +123,7 @@ def start_debug_chrome(start_url="https://updowanfx.com/settings"):
             return
         time.sleep(0.5)
 
-    raise Exception("Chrome debug port start नहीं हुआ।")
+    raise Exception("Chrome debug port failed to start.")
 
 
 def keep_system_awake():
@@ -196,26 +202,27 @@ def open_new_tab(browser, url):
     elif after:
         browser.switch_to.window(after[-1])
     browser.get(url)
-    print("New Chrome tab खोला:", url)
+    print("Opened new Chrome tab:", url)
 
 
 def connect_chrome():
-    # Local Windows: दिखने वाला Chrome + remote debug (settings के साथ नया tab)।
-    # AWS/Linux: headless (server पर Chrome window नहीं दिखता)।
+    # Local Windows: visible Chrome + remote debug (new tab with settings).
+    # AWS/Linux: headless (no Chrome window on the server).
     use_debug = os.getenv("CHROME_DEBUG", "").strip().lower() in ("1", "true", "yes")
     if os.name == "nt" and os.getenv("CHROME_DEBUG", "1").strip() != "0":
         use_debug = True
 
     if use_debug:
-        start_debug_chrome("https://updowanfx.com/settings")
+        app_url = os.getenv("APP_URL", "").strip().rstrip("/")
+        start_debug_chrome(f"{app_url}/settings" if app_url else "about:blank")
         options = Options()
         options.add_experimental_option(
             "debuggerAddress",
-            f"127.0.0.1:{CHROME_DEBUG_PORT}",
+            f"{CHROME_DEBUG_HOST}:{CHROME_DEBUG_PORT}",
         )
         browser = webdriver.Chrome(options=options)
         harden_browser_for_background(browser)
-        print("Visible Chrome (debug) attach हो गया — automation new tab में चलेगी।")
+        print("Attached to visible Chrome (debug) — automation will run in a new tab.")
         return browser
 
     options = Options()
@@ -237,6 +244,12 @@ def connect_chrome():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
+    # Infrastructure-only: isolated Chrome profile per app session (no game-logic change).
+    chrome_user_data_dir = os.getenv("CHROME_USER_DATA_DIR", "").strip()
+    if chrome_user_data_dir:
+        Path(chrome_user_data_dir).mkdir(parents=True, exist_ok=True)
+        options.add_argument(f"--user-data-dir={chrome_user_data_dir}")
+
     headless_env = os.getenv("HEADLESS", "").strip().lower()
     use_headless = headless_env in ("1", "true", "yes")
     if headless_env in ("0", "false", "no"):
@@ -253,9 +266,9 @@ def connect_chrome():
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--remote-allow-origins=*")
-        print("Chrome headless mode (AWS/server) चालू है।")
+        print("Chrome headless mode (AWS/server) is on.")
     else:
-        print("Chrome visible mode चालू है।")
+        print("Chrome visible mode is on.")
 
     browser = webdriver.Chrome(options=options)
     try:
@@ -409,11 +422,11 @@ def session_should_stop(cursor):
     )
 
     if target_add and current_amount >= target_line:
-        print("Target price plus हो गया। System off हो रहा है।")
+        print("Target profit reached. Shutting system down.")
         return True
 
     if main_amount and loss_total - win_total >= main_amount:
-        print("Main amount का loss पूरा हो गया। Stop loss पर system stop हो रहा है।")
+        print("Main amount loss complete. Stopping at stop loss.")
         return True
 
     return False
@@ -519,15 +532,15 @@ def get_next_bet_amount(cursor):
             last_amount = row[0]
             last_status = row[1]
 
-    # WIN और पहली bet पर starting amount।
-    # सिर्फ आखिरी LOSS के अगले level पर जाना है। 300 तभी, जब 100 की bet हारी हो।
+    # Use starting amount on WIN and the first bet.
+    # Move to the next level only after the last LOSS. Use 300 only after a 100 loss.
     if last_status != -1:
         amount = starting
         print("Next amount: Start bet =", amount)
     else:
         amount, level_number = next_amount_after_loss(last_amount, starting, levels)
         if level_number == 0:
-            print("आखिरी level का loss book हो गया। Starting bet से दोबारा शुरू।")
+            print("Last level loss booked. Restarting from starting bet.")
             print("Next amount: Start bet =", amount)
         else:
             print("Next amount: Level", level_number, "=", amount)
@@ -538,22 +551,20 @@ def get_next_bet_amount(cursor):
 
 
 def dismiss_popups(browser):
-    for count in range(12):
+    for count in range(8):
         announcement_buttons = browser.find_elements(
             By.CLASS_NAME, "announcement-dialog__button"
         )
         reward_buttons = browser.find_elements(
             By.CLASS_NAME, "reward-amount-dialog__button"
         )
+        # Only Cancel inside dialog/popup — otherwise login page may go back.
         cancel_buttons = browser.find_elements(
             By.XPATH,
-            "//*[self::button or contains(@class,'van-button') or @role='button']"
-            "[contains(normalize-space(.),'Cancel') or contains(normalize-space(.),'Close')"
-            " or contains(normalize-space(.),'OK') or contains(normalize-space(.),'Got it')]",
-        )
-        # Customer-service / tip dialog overlay
-        overlays = browser.find_elements(
-            By.CSS_SELECTOR, ".van-popup, .van-dialog, .van-overlay"
+            "//*[contains(@class,'van-dialog') or contains(@class,'van-popup')]"
+            "//*[self::button or contains(@class,'van-button')]"
+            "[normalize-space()='Cancel' or normalize-space()='Close'"
+            " or normalize-space()='OK' or normalize-space()='Got it']",
         )
 
         if announcement_buttons:
@@ -570,28 +581,36 @@ def dismiss_popups(browser):
             time.sleep(0.3)
         elif cancel_buttons:
             try:
-                cancel_buttons[0].click()
+                if cancel_buttons[0].is_displayed():
+                    cancel_buttons[0].click()
+                    print("Closed popup/dialog with Cancel.")
+                    time.sleep(0.4)
+                else:
+                    break
             except Exception:
-                browser.execute_script("arguments[0].click();", cancel_buttons[0])
-            print("Popup/dialog Cancel किया।")
-            time.sleep(0.4)
-        else:
-            # Escape से भी overlay बंद करने की कोशिश
-            if any(_safe_displayed(el) for el in overlays):
                 try:
-                    from selenium.webdriver.common.action_chains import ActionChains
-                    ActionChains(browser).send_keys(Keys.ESCAPE).perform()
-                    time.sleep(0.3)
+                    browser.execute_script("arguments[0].click();", cancel_buttons[0])
+                    print("Closed popup/dialog with Cancel.")
+                    time.sleep(0.4)
                 except Exception:
-                    pass
+                    break
+        else:
             break
 
 
-def _safe_displayed(el):
-    try:
-        return el.is_displayed()
-    except Exception:
-        return False
+def wingo_hash():
+    if "#" in WINGO_URL:
+        hash_part = WINGO_URL.split("#", 1)[1]
+    else:
+        hash_part = "/saas/Lottery/WinGo?gameCode=WinGo_30S&lottery=WinGo"
+    hash_part = hash_part.lstrip("#")
+    if not hash_part.startswith("/"):
+        hash_part = "/" + hash_part
+    return "#" + hash_part
+
+
+def site_home_url():
+    return f"https://{GAME_SITE}/"
 
 
 def is_win_go_open(browser):
@@ -601,16 +620,66 @@ def is_win_go_open(browser):
     except Exception:
         url = ""
 
-    if "wingo" in url:
+    # Home with ?gameCode=WinGo is NOT the game page.
+    if "#/saas/lottery/wingo" in url:
         return True
 
     serials = browser.find_elements(By.CLASS_NAME, SERIAL_CLASS)
-    if serials:
-        return True
+    for serial in serials:
+        try:
+            if serial.is_displayed() and (serial.text or "").strip():
+                return True
+        except Exception:
+            pass
 
     big_buttons = browser.find_elements(By.CLASS_NAME, BIG_BUTTON_CLASS)
     small_buttons = browser.find_elements(By.CLASS_NAME, SMALL_BUTTON_CLASS)
-    return bool(big_buttons and small_buttons)
+    for button in list(big_buttons) + list(small_buttons):
+        try:
+            if button.is_displayed():
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def navigate_to_wingo(browser):
+    print("Navigating to Win Go game page...")
+    home = site_home_url()
+    target_hash = wingo_hash()
+
+    try:
+        current = browser.current_url or ""
+    except Exception:
+        current = ""
+
+    if GAME_SITE.lower() not in current.lower():
+        browser.get(home)
+        time.sleep(2)
+
+    # Hash routing keeps SPA on the game route (browser.get drops /saas/Lottery/WinGo).
+    browser.execute_script("window.location.hash = arguments[0];", target_hash)
+    time.sleep(3)
+    dismiss_popups(browser)
+
+    if not is_win_go_open(browser):
+        browser.execute_script(
+            "window.location.href = arguments[0];",
+            home.rstrip("/") + "/" + target_hash,
+        )
+        time.sleep(3)
+        dismiss_popups(browser)
+
+    for attempt in range(25):
+        if is_win_go_open(browser):
+            print("Win Go game page ready:", browser.current_url)
+            return True
+        time.sleep(0.4)
+
+    debug_page_state(browser, "wingo-navigate-fail")
+    print("Win Go page failed to open. URL:", browser.current_url)
+    return False
 
 
 def find_win_go_card(browser):
@@ -634,17 +703,21 @@ def find_win_go_card(browser):
 
 
 def open_win_go(browser):
-    print("5. Page scroll करके Win Go card खोला जा रहा है...")
+    print("5. Scrolling page to open Win Go card...")
     dismiss_popups(browser)
     time.sleep(1)
 
     for attempt in range(12):
+        if is_win_go_open(browser):
+            print("Already on Win Go game page.")
+            return
+
         browser.execute_script("window.scrollBy(0, 350);")
         time.sleep(0.5)
 
         win_go = find_win_go_card(browser)
         if win_go is None:
-            print("Win Go card का इंतजार हो रहा है...")
+            print("Waiting for Win Go card...")
             dismiss_popups(browser)
             time.sleep(0.5)
             continue
@@ -658,30 +731,39 @@ def open_win_go(browser):
         try:
             win_go.click()
         except (ElementClickInterceptedException, ElementNotInteractableException):
-            print("Popup click रोक रहा था। JavaScript click हो रहा है...")
+            print("Popup blocked click. Using JavaScript click...")
             dismiss_popups(browser)
             browser.execute_script("arguments[0].click();", win_go)
 
-        time.sleep(2)
+        time.sleep(3)
         if is_win_go_open(browser):
-            print("Win Go card से खुल गया।")
+            print("Opened from Win Go card.")
             return
 
-    print("Win Go card नहीं मिला। Win Go URL खुल रहा है...")
-    browser.get(WINGO_URL)
-    time.sleep(4)
-    dismiss_popups(browser)
-    debug_page_state(browser, "after-wingo-url")
+    print("Win Go card did not open game page. Using hash URL...")
+    navigate_to_wingo(browser)
 
 
 def reload_win_go_page(browser):
-    print("6. Win Go reload हो रहा है...")
-    time.sleep(3)
-    browser.get(WINGO_URL)
-    time.sleep(3)
-    dismiss_popups(browser)
+    print("6. Reloading Win Go...")
+    time.sleep(2)
+
+    if is_win_go_open(browser):
+        browser.refresh()
+        time.sleep(3)
+        dismiss_popups(browser)
+    else:
+        navigate_to_wingo(browser)
+
+    if not is_win_go_open(browser):
+        navigate_to_wingo(browser)
+
     debug_page_state(browser, "after-wingo-reload")
-    print("Win Go reload हो गया। अब amount popup खुलेगा।")
+    if not is_win_go_open(browser):
+        raise Exception(
+            "Stuck on home page instead of Win Go. Check GAME_WINGO_URL in .env."
+        )
+    print("Win Go ready. Amount popup will open after serial detect.")
 
 
 def get_serial_from_history(browser):
@@ -739,13 +821,13 @@ def get_serial_number(browser):
         if history_serial:
             return history_serial
     except Exception as error:
-        print("Serial read error, retry होगा:", error)
+        print("Serial read error, will retry:", error)
 
     return None
 
 
 def get_latest_result(browser):
-    # Latest result element मौजूद न हो तो खाली values लौटाता है।
+    # Return empty values if the latest result element is missing.
     result_elements = browser.find_elements(By.CSS_SELECTOR, RESULT_CSS)
 
     if not result_elements:
@@ -755,7 +837,7 @@ def get_latest_result(browser):
     result_text = result_elements[0].text.strip()
     result_type = None
 
-    # Result की हर line में BIG या SMALL खोजता है।
+    # Search each result line for BIG or SMALL.
     for line in result_text.splitlines():
         word = line.strip().lower()
 
@@ -797,7 +879,7 @@ def get_result_records(browser):
 
 
 def get_last_big_small(browser):
-    # Game history की पहली row latest completed serial होती है।
+    # The first game-history row is the latest completed serial.
     records = get_result_records(browser)
 
     if records:
@@ -806,7 +888,7 @@ def get_last_big_small(browser):
         if last_result == "big" or last_result == "small":
             return last_result
 
-    # Result उपलब्ध न हो तो कुछ नहीं लौटाता।
+    # Return nothing if no result is available.
     return None
 
 
@@ -820,7 +902,7 @@ def save_serial(cursor, db, serial_number):
     """
     cursor.execute(query, (serial_number, 0, current_user_id()))
     db.commit()
-    print(f"New serial database में save हुआ: {serial_number}")
+    print(f"New serial saved to database: {serial_number}")
 
 
 def serial_has_row(cursor, serial_number):
@@ -878,11 +960,11 @@ def save_user_bet(cursor, db, serial_number, bet_type, amount):
         )
 
     db.commit()
-    print("User bet database में save हुई:", bet_type.upper(), "Amount:", amount)
+    print("User bet saved to database:", bet_type.upper(), "Amount:", amount)
 
 
 def get_bet_status():
-    # किसी argument की जरूरत नहीं। सिर्फ last bet database से पढ़ी जाती है।
+    # No arguments needed. Reads the last bet from the database only.
     db = connect_database()
     cursor = db.cursor()
     cursor.execute(
@@ -933,7 +1015,7 @@ def recovery_simulator():
 
 
 def save_game_result(cursor, db, serial_number, result_type):
-    # उसी serial की saved bet और amount से WIN/LOSS amount निकाली जाती है।
+    # Compute WIN/LOSS amount from the saved bet and amount for that serial.
     clause, params = user_sql([serial_number])
     cursor.execute(
         f"""
@@ -985,7 +1067,7 @@ def save_game_result(cursor, db, serial_number, result_type):
         status_text = "LOSS"
 
     print(
-        "Result database में save हुआ:",
+        "Result saved to database:",
         serial_number,
         result_type.upper(),
         status_text,
@@ -1026,12 +1108,12 @@ def bet_created(browser, bet_type, amount):
     bet_type = bet_type.lower()
 
     if bet_type not in ("big", "small"):
-        print("Type केवल big या small हो सकती है।")
+        print("Type must be big or small only.")
         return False
 
     button = find_bet_button(browser, bet_type)
     if button is None:
-        print(bet_type.upper(), "button नहीं मिला।")
+        print(bet_type.upper(), "button not found.")
         return False
 
     browser.execute_script("arguments[0].scrollIntoView({block:'center'});", button)
@@ -1044,7 +1126,7 @@ def bet_created(browser, bet_type, amount):
         try:
             button.click()
         except (ElementClickInterceptedException, ElementNotInteractableException):
-            print(bet_type.upper(), "normal click नहीं हुआ। JavaScript click हो रहा है...")
+            print(bet_type.upper(), "Normal click failed. Using JavaScript click...")
             browser.execute_script("arguments[0].click();", button)
 
     number = None
@@ -1063,7 +1145,7 @@ def bet_created(browser, bet_type, amount):
         time.sleep(0.3)
 
     if number is None:
-        print(bet_type.upper(), "amount popup नहीं खुला।")
+        print(bet_type.upper(), "amount popup did not open.")
         return False
 
     try:
@@ -1106,15 +1188,15 @@ def bet_created(browser, bet_type, amount):
         try:
             element.click()
         except (ElementClickInterceptedException, ElementNotInteractableException):
-            print(bet_type.upper(), "confirm overlay रोक रहा था। JavaScript click हो रहा है...")
+            print(bet_type.upper(), "Confirm overlay blocked click. Using JavaScript click...")
             browser.execute_script("arguments[0].click();", element)
     except Exception as error:
-        print(bet_type.upper(), "confirm click नहीं हुआ:", error)
-        print(bet_type.upper(), "amount popup खुला। Amount:", amount)
+        print(bet_type.upper(), "confirm click failed:", error)
+        print(bet_type.upper(), "amount popup opened. Amount:", amount)
         return True
 
-    print(bet_type.upper(), "amount popup खुला। Amount:", amount)
-    print("Confirmation खुद click करें।")
+    print(bet_type.upper(), "amount popup opened. Amount:", amount)
+    print("Click confirmation manually.")
     return True
 
 
@@ -1128,7 +1210,7 @@ def bet_result(browser):
             result_text = result_elements[0].text.strip()
             return result_text
 
-        print("Result element का इंतजार हो रहा है...")
+        print("Waiting for result element...")
         time.sleep(1)
 
 
@@ -1145,23 +1227,23 @@ def bet_result(browser):
 
 
 def prepare_bet(browser, cursor, db, serial_number):
-    # Dry-run में website पर form नहीं खोला जाता; केवल जानकारी print होती है।
+    # In dry-run the website form is not opened; only info is printed.
     if DRY_RUN:
         print(
-            f"[DRY RUN] Serial {serial_number} के लिए "
-            f"amount {BET_AMOUNT} की bet तैयार होती।"
+            f"[DRY RUN] Serial {serial_number}: "
+            f"amount {BET_AMOUNT} bet would be prepared."
         )
         return True
 
     try:
         if get_serial_number(browser) != serial_number:
-            print("Serial बदल गया। अगले round में bet बनेगी।")
+            print("Serial changed. Bet will be placed on the next round.")
             return False
 
         remaining = get_remaining_seconds(browser)
         print("Bet time left:", remaining)
         if remaining is not None and remaining < MIN_SECONDS_TO_BET:
-            print("Bet window बहुत कम है। अगले round का इंतजार।")
+            print("Bet window too short. Waiting for next round.")
             return False
 
         last_big_small = None
@@ -1175,22 +1257,22 @@ def prepare_bet(browser, cursor, db, serial_number):
             time.sleep(0.2)
 
         if not last_big_small:
-            print("Last BIG/SMALL result नहीं मिला। दोबारा कोशिश होगी।")
+            print("Last BIG/SMALL result not found. Will retry.")
             return False
 
-        print("Last result:", last_big_small.upper(), "इसका amount popup खुलेगा।")
+        print("Last result:", last_big_small.upper(), "- opening its amount popup.")
         amount = get_next_bet_amount(cursor)
         form_is_ready = bet_created(browser, last_big_small, amount)
         save_user_bet(cursor, db, serial_number, last_big_small, amount)
 
         if form_is_ready:
-            print(f"Serial {serial_number} के लिए form तैयार है।")
+            print(f"Serial {serial_number} form is ready.")
             return True
 
-        print(f"Serial {serial_number} के लिए popup नहीं खुला। दोबारा कोशिश होगी।")
+        print(f"Serial {serial_number} popup did not open. Will retry.")
         return False
     except Exception as error:
-        print("Bet prepare error, system चलता रहेगा:", error)
+        print("Bet prepare error, system will continue:", error)
         return False
 
 
@@ -1218,7 +1300,7 @@ def ensure_bet_for_serial(browser, cursor, db, serial_number):
     for attempt in range(4):
         current = get_serial_number(browser)
         if current != serial_number:
-            print("Round बदल गया। Current serial पर bet लगेगी:", current)
+            print("Round changed. Bet will use current serial:", current)
             return False
 
         remaining = get_remaining_seconds(browser)
@@ -1297,13 +1379,12 @@ def watch_serial_numbers(browser, cursor, db):
         old_serial = get_serial_number(browser)
         if old_serial:
             break
-        print("Serial number का इंतजार हो रहा है...")
+        print("Waiting for serial number...")
         if attempt in (0, 10, 20, 30):
             debug_page_state(browser, f"serial-wait-{attempt}")
             dismiss_popups(browser)
-            if "wingo" not in (browser.current_url or "").lower():
-                browser.get(WINGO_URL)
-                time.sleep(2)
+            if not is_win_go_open(browser):
+                navigate_to_wingo(browser)
         time.sleep(1)
 
     print("Initial serial:", old_serial)
@@ -1312,17 +1393,17 @@ def watch_serial_numbers(browser, cursor, db):
         serial_seen_at[old_serial] = time.time()
         save_serial(cursor, db, old_serial)
 
-    # Page खुलते समय मौजूद result को पुराना result माना जाता है।
+    # Treat the result present when the page opens as the old result.
     old_result_text, old_result_type = get_latest_result(browser)
 
     if old_result_type:
         print("Initial result:", old_result_type.upper())
 
-    # एक result को बार-बार database में update होने से रोकता है।
+    # Prevents the same result from being updated repeatedly in the database.
     saved_results = set()
 
-    # Program बंद होने तक हर round check होता है।
-    # 5 सेकंड wait serial-first-seen से गिना जाता है, इसलिए बीच के round miss नहीं होते।
+    # Checks every round until the program stops.
+    # The 5-second wait is counted from serial-first-seen so mid rounds are not missed.
     while True:
         try:
             keep_system_awake()
@@ -1336,7 +1417,7 @@ def watch_serial_numbers(browser, cursor, db):
             save_pending_results(browser, cursor, db, saved_results)
 
             if session_should_stop(cursor):
-                print("Monitoring बंद हो गई।")
+                print("Monitoring stopped.")
                 close_browser(browser)
                 return
 
@@ -1350,16 +1431,16 @@ def watch_serial_numbers(browser, cursor, db):
                     gap = int(new_serial) - int(old_serial)
                     if gap > 1:
                         print(
-                            "Gap मिला:",
+                            "Gap found:",
                             gap - 1,
-                            "serial miss।",
+                            "serial(s) missed.",
                             old_serial,
-                            "से",
+                            "to",
                             new_serial,
                         )
-                print("Serial बदला:", old_serial, "से", new_serial)
+                print("Serial changed:", old_serial, "to", new_serial)
                 remaining_now = get_remaining_seconds(browser)
-                # Round पहले से 5 सेकंड से ज्यादा चल चुका हो तो और wait मत करो।
+                # If the round has already run more than 5 seconds, do not wait more.
                 if remaining_now is not None and remaining_now <= 25:
                     serial_seen_at[new_serial] = time.time() - BET_PREPARE_DELAY_SECONDS
                 else:
@@ -1384,11 +1465,11 @@ def watch_serial_numbers(browser, cursor, db):
                     )
                     ensure_bet_for_serial(browser, cursor, db, new_serial)
 
-                    # Bet के दौरान serial आगे बढ़ गया हो तो तुरंत current पर लगाना।
+                    # If the serial advanced during the bet, switch to the current serial immediately.
                     current = get_serial_number(browser)
                     if current and current != new_serial:
                         if current not in serial_seen_at:
-                            print("Busy में नया serial आया:", current)
+                            print("New serial arrived while busy:", current)
                             remaining_now = get_remaining_seconds(browser)
                             if remaining_now is not None and remaining_now <= 25:
                                 serial_seen_at[current] = (
@@ -1401,7 +1482,7 @@ def watch_serial_numbers(browser, cursor, db):
 
             time.sleep(0.2)
         except StaleElementReferenceException as error:
-            print("Loss book के बाद page बदली। Starting bet जारी रहेगी:", error)
+            print("Page changed after loss book. Starting bet continues:", error)
             time.sleep(0.5)
 
 
@@ -1462,19 +1543,22 @@ def is_login_loading(browser):
     try:
         loaders = browser.find_elements(
             By.CSS_SELECTOR,
-            ".van-toast--loading, .van-loading--circular, .van-overlay + .van-toast",
+            ".van-toast--loading, .van-loading--circular",
         )
         for el in loaders:
             try:
-                if el.is_displayed():
-                    text = (el.text or "").strip().lower()
-                    if "loading" in text or el.get_attribute("class"):
-                        return "loading" in text or "van-toast--loading" in (
-                            el.get_attribute("class") or ""
-                        )
+                if not el.is_displayed():
+                    continue
+                classes = el.get_attribute("class") or ""
+                text = (el.text or "").strip().lower()
+                if "van-toast--loading" in classes or "van-loading" in classes:
+                    return True
+                if "loading" in text:
+                    return True
             except StaleElementReferenceException:
                 continue
-        toast = page_toast_text(browser).lower()
+
+        toast = page_toast_text(browser).lower().strip()
         return toast == "loading..." or toast.startswith("loading")
     except Exception:
         return False
@@ -1490,7 +1574,7 @@ def fill_input(browser, element, text):
     except Exception:
         pass
 
-    # Vue/React controlled inputs: native value setter जरूरी है।
+    # Vue/React controlled inputs: native value setter is required.
     browser.execute_script(
         """
         const el = arguments[0];
@@ -1568,7 +1652,7 @@ def click_login_submit(browser, password_element):
     print("Login button enabled:", enabled)
     if not enabled:
         raise Exception(
-            "Log in button disabled है — phone/password Vue में bind नहीं हुए।"
+            "Log in button is disabled — phone/password not bound in Vue."
         )
 
     if button is not None:
@@ -1580,7 +1664,7 @@ def click_login_submit(browser, password_element):
             browser.execute_script("arguments[0].click();", button)
         return True
 
-    print("Login button नहीं मिला, Enter try हो रहा है...")
+    print("Login button not found, trying Enter...")
     try:
         password_element.send_keys(Keys.ENTER)
         return True
@@ -1620,13 +1704,13 @@ def close_browser(browser):
 
 
 def userdata(phone_number, password_text):
-    # Login credentials न मिलने पर program स्पष्ट error के साथ रुकता है।
+    # Stop with a clear error if login credentials are missing.
     if not phone_number or not password_text:
         raise ValueError(
-            "Mobile number और password settings form से भेजो।"
+            "Send mobile number and password from the settings form."
         )
 
-    # Database cursor query चलाता है और Chrome website automation संभालता है।
+    # Runs database queries and Chrome website automation.
     db = connect_database()
     cursor = db.cursor()
     prepare_database(cursor, db)
@@ -1634,29 +1718,36 @@ def userdata(phone_number, password_text):
 
     try:
         keep_system_awake()
-        print("Screen off / दूसरी tab पर होने पर भी bot चलता रहेगा।")
+        print("Bot keeps running even if screen is off or another tab is active.")
         if USER_ID:
             print("User ID:", USER_ID, "Mobile:", phone_number)
-        print("1. Login page new tab में खुल रहा है...")
+        print("1. Opening login page in a new tab...")
         open_new_tab(browser, LOGIN_URL)
         harden_browser_for_background(browser)
         time.sleep(3)
+        # Stay on the login URL; do not leave to home via a bad Cancel click.
+        if "login" not in (browser.current_url or "").lower():
+            browser.get(LOGIN_URL)
+            time.sleep(2)
         dismiss_popups(browser)
+        if "login" not in (browser.current_url or "").lower():
+            browser.get(LOGIN_URL)
+            time.sleep(2)
 
-        print("2. Login data fill हो रहा है...")
+        print("2. Filling login data...")
         password = None
         for fill_try in range(5):
             dismiss_popups(browser)
             phone = wait_for_interactable(browser, By.NAME, "userNumber", timeout=10)
             if phone is None:
-                raise Exception("Login form नहीं मिला।")
+                raise Exception("Login form not found.")
             fill_input(browser, phone, phone_number)
 
             password = wait_for_interactable(
                 browser, By.CSS_SELECTOR, 'input[type="password"]', timeout=10
             )
             if password is None:
-                raise Exception("Password field नहीं मिला।")
+                raise Exception("Password field not found.")
             fill_input(browser, password, password_text)
 
             phone_val = phone.get_attribute("value") or ""
@@ -1670,10 +1761,10 @@ def userdata(phone_number, password_text):
         else:
             debug_page_state(browser, "fill-failed")
             raise Exception(
-                "Phone/password UI में नहीं भरे। Vue bind fail — screenshot देखो।"
+                "Phone/password not filled in UI. Vue bind failed — check screenshot."
             )
 
-        print("3. Login हो रहा है...")
+        print("3. Logging in...")
         dismiss_popups(browser)
         click_login_submit(browser, password)
 
@@ -1694,18 +1785,18 @@ def userdata(phone_number, password_text):
             debug_page_state(browser, "login-failed")
             if is_login_loading(browser) or "loading" in (toast or "").lower():
                 raise Exception(
-                    "Login loading अटका। AWS IP block हो सकता है या password गलत। "
-                    "पहले browser से damanvipgames.com login करके verify करो।"
+                    "Login loading stuck. AWS IP may be blocked or password is wrong. "
+                    "Verify login on the game site in a browser first."
                 )
             extra = f" Site message: {toast}" if toast else ""
             raise Exception(
-                "Login नहीं हुआ। Mobile/password check करो।" + extra
+                "Login failed. Check mobile/password." + extra
             )
 
         debug_page_state(browser, "login-ok")
         print("Game site:", GAME_SITE)
 
-        print("4. Popups बंद हो रहे हैं...")
+        print("4. Dismissing popups...")
         dismiss_popups(browser)
         time.sleep(1)
 
@@ -1717,9 +1808,9 @@ def userdata(phone_number, password_text):
         keep_browser_active(browser)
         watch_serial_numbers(browser, cursor, db)
     except KeyboardInterrupt:
-        print("Monitoring बंद किया गया।")
+        print("Monitoring stopped.")
     except InvalidSessionIdException:
-        print("Chrome connection टूट गई। Settings से दोबारा Submit करो।")
+        print("Chrome connection lost. Submit again from Settings.")
     except Exception as error:
         print("Bot error:", error)
         try:
